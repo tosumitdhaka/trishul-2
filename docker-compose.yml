@@ -70,7 +70,7 @@ services:
     networks:
       - trishul-net
 
-  # ── MFE remotes ─────────────────────────────────────────────────────
+  # ── MFE remotes ────────────────────────────────────────────────────────────────────
 
   fm-console:
     build:
@@ -230,14 +230,16 @@ services:
 
   influxdb:
     image: influxdb:2-alpine
-    mem_limit: 200m
+    mem_limit: 300m
     restart: unless-stopped
     environment:
       DOCKER_INFLUXDB_INIT_MODE:        setup
+      DOCKER_INFLUXDB_INIT_USERNAME:    ${INFLUX_ADMIN_USER:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD:    ${INFLUX_ADMIN_PASSWORD:-trishul-admin-pass}
       DOCKER_INFLUXDB_INIT_ORG:         trishul
       DOCKER_INFLUXDB_INIT_BUCKET:      fcaps_pm
       DOCKER_INFLUXDB_INIT_RETENTION:   30d
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN:-trishul-dev-token}
     volumes:
       - influx-data:/var/lib/influxdb2
     healthcheck:
