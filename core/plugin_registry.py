@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
+# Subpackages that are NOT plugins (utilities, shared code, etc.)
+_NON_PLUGIN_MODULES = {"shared"}
+
 
 class FCAPSPlugin(ABC):
     """Every protocol plugin must subclass this and expose a module-level `plugin` instance."""
@@ -67,9 +70,18 @@ class PluginRegistry:
         import plugins as plugins_pkg
 
         for module_info in pkgutil.iter_modules(plugins_pkg.__path__):
+            if module_info.name in _NON_PLUGIN_MODULES:
+                log.debug("plugin_skipped_non_plugin", module=module_info.name)
+                continue
+
             module_name = f"plugins.{module_info.name}"
             try:
                 module = importlib.import_module(module_name)
+
+                if not hasattr(module, "plugin"):
+                    log.warning("plugin_missing_instance", module=module_name)
+                    continue
+
                 plugin: FCAPSPlugin = module.plugin
 
                 await plugin.on_startup(
@@ -87,7 +99,12 @@ class PluginRegistry:
                 log.info("plugin_loaded", plugin=plugin.name, version=plugin.version)
 
             except Exception as exc:
-                log.error("plugin_startup_failed", module=module_name, error=str(exc), exc_info=True)
+                log.error(
+                    "plugin_startup_failed",
+                    module=module_name,
+                    error=str(exc),
+                    exc_info=True,
+                )
 
     async def shutdown_all(self) -> None:
         for plugin in self.plugins.values():

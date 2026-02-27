@@ -4,6 +4,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import redis.asyncio as aioredis
 
 from core.config.settings import get_settings
 from core.middleware.rate_limit import RateLimitMiddleware
@@ -67,17 +68,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     _register_pipeline_stages()
 
+    # ── NATS ─────────────────────────────────────────────────────
     nats = get_nats_client()
     await nats.connect(settings.NATS_URL)
     await provision_streams(nats)
+    app.state.nats = nats          # <─ wired so health check can reach it
     log.info("nats_connected", url=settings.NATS_URL)
 
+    # ── Redis ───────────────────────────────────────────────────
+    redis = aioredis.from_url(
+        settings.REDIS_URL,
+        encoding="utf-8",
+        decode_responses=True,
+        socket_connect_timeout=3,
+    )
+    await redis.ping()             # fail fast if Redis is unreachable
+    app.state.redis = redis        # <─ wired so health check can reach it
+    log.info("redis_connected", url=settings.REDIS_URL)
+
+    # ── NATS readers/writers (need nats object) ─────────────────────
     from transformer.readers.nats import NATSReader
     from transformer.writers.nats import NATSWriter
     pipeline_registry.register_reader("nats", NATSReader(nats))
     pipeline_registry.register_writer("nats", NATSWriter(nats))
     app.state.pipeline_registry = pipeline_registry
 
+    # ── Storage ───────────────────────────────────────────────
     metrics_store, event_store = get_stores(settings.STORAGE_MODE)
     app.state.metrics_store = metrics_store
     app.state.event_store   = event_store
@@ -88,11 +104,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pipeline_registry.register_writer("influxdb",     InfluxDBWriter(metrics_store))
     pipeline_registry.register_writer("victorialogs", VictoriaLogsWriter(event_store))
 
+    # ── Plugins ───────────────────────────────────────────────
     registry = PluginRegistry()
     await registry.load_all(app, nats, metrics_store, event_store)
     app.state.plugin_registry = registry
     log.info("plugins_loaded", count=len(registry.plugins))
 
+    # ── Notifications ──────────────────────────────────────────
     notification_service = NotificationService(nats, metrics_store, event_store)
     await notification_service.start()
     app.state.notification_service = notification_service
@@ -104,9 +122,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     yield
 
+    # ── Shutdown ──────────────────────────────────────────────
     log.info("shutdown_begin")
     await registry.shutdown_all()
     await notification_service.stop()
+    await redis.aclose()
     await nats.drain()
     log.info("shutdown_complete")
 
