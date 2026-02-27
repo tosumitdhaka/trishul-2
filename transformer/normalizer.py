@@ -1,32 +1,47 @@
-"""FCAPSNormalizer — the single shared Normalizer for all protocols.
+from __future__ import annotations
 
-Every protocol Decoder outputs a plain dict.
-This Normalizer maps it to a canonical MessageEnvelope.
+from typing import Any
 
-meta dict keys (set by the calling plugin):
-  domain       — FCAPSDomain value (required)
-  protocol     — protocol string (required)
-  source_ne    — NE identifier (falls back to decoded field)
-  direction    — Direction value (default: inbound)
-  raw_payload  — original inbound data
-  trace_id     — request trace ID
-  tags         — list of tag strings
-"""
-
-from core.models.envelope import Direction, MessageEnvelope, Severity
 from transformer.base import Normalizer
+from core.models.envelope import Direction, FCAPSDomain, MessageEnvelope, Severity
 
 
 class FCAPSNormalizer(Normalizer):
-    async def normalize(self, decoded: dict, meta: dict) -> MessageEnvelope:
-        severity_raw = decoded.get("severity") or meta.get("severity")
-        severity     = Severity(severity_raw) if severity_raw else None
+    """
+    Single shared Normalizer used by all protocol plugins.
+    meta dict expected keys:
+        domain       : str  (FM | PM | LOG)
+        protocol     : str
+        source_ne    : str  (optional — falls back to decoded['source_ne'])
+        direction    : str  (optional, default 'inbound')
+        severity     : str  (optional, FM only)
+        raw_payload  : dict (original bytes/dict before decoding)
+        trace_id     : str  (optional)
+        tags         : list (optional)
+    """
+
+    async def normalize(
+        self,
+        decoded: dict[str, Any],
+        meta:    dict[str, Any],
+    ) -> MessageEnvelope:
+        source_ne = (
+            meta.get("source_ne")
+            or decoded.get("source_ne")
+            or decoded.get("sourceId")
+            or "unknown"
+        )
+        severity_raw = meta.get("severity") or decoded.get("severity")
+        try:
+            severity = Severity(severity_raw.upper()) if severity_raw else None
+        except (ValueError, AttributeError):
+            severity = None
 
         return MessageEnvelope(
-            domain      = meta["domain"],
+            domain      = FCAPSDomain(meta["domain"]),
             protocol    = meta["protocol"],
-            source_ne   = meta.get("source_ne") or decoded.get("source_ne", "unknown"),
-            direction   = meta.get("direction", Direction.INBOUND),
+            source_ne   = source_ne,
+            direction   = Direction(meta.get("direction", Direction.INBOUND)),
             severity    = severity,
             raw_payload = meta.get("raw_payload", {}),
             normalized  = decoded,

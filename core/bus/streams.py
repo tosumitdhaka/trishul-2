@@ -1,57 +1,59 @@
-"""JetStream stream provisioning.
-
-All four streams are created at startup if they don't already exist.
-Existing streams with matching configs are left untouched (idempotent).
-"""
+from __future__ import annotations
 
 import logging
 
-from nats.js import JetStreamContext
+from nats.aio.client import Client as NATSClient
 from nats.js.api import RetentionPolicy, StorageType, StreamConfig
 
 log = logging.getLogger(__name__)
 
-STREAMS: list[StreamConfig] = [
-    StreamConfig(
-        name="FCAPS_INGEST",
-        subjects=["fcaps.ingest.>"],
-        storage=StorageType.FILE,
-        retention=RetentionPolicy.LIMITS,
-        max_age=3600,           # 1 hour
-        description="Raw inbound messages — survives restart",
-    ),
-    StreamConfig(
-        name="FCAPS_PROCESS",
-        subjects=["fcaps.process.>"],
-        storage=StorageType.MEMORY,
-        retention=RetentionPolicy.WORK_QUEUE,
-        description="Transformer work queue — once-and-only-once processing",
-    ),
-    StreamConfig(
-        name="FCAPS_DONE",
-        subjects=["fcaps.done.>"],
-        storage=StorageType.MEMORY,
-        retention=RetentionPolicy.LIMITS,
-        max_age=1800,           # 30 minutes
-        description="Processed envelopes — fan-out to storage + websocket",
-    ),
-    StreamConfig(
-        name="FCAPS_SIM",
-        subjects=["fcaps.sim.>"],
-        storage=StorageType.MEMORY,
-        retention=RetentionPolicy.LIMITS,
-        max_age=3600,           # 1 hour
-        description="Simulated outbound messages — audit trail",
-    ),
+# Stream definitions — frozen per architecture doc
+_STREAMS: list[dict] = [
+    {
+        "name":     "FCAPS_INGEST",
+        "subjects": ["fcaps.ingest.>"],
+        "storage":  StorageType.FILE,
+        "retention": RetentionPolicy.LIMITS,
+        "max_age":  3600,   # 1 hour in seconds
+    },
+    {
+        "name":     "FCAPS_PROCESS",
+        "subjects": ["fcaps.process.>"],
+        "storage":  StorageType.MEMORY,
+        "retention": RetentionPolicy.WORK_QUEUE,
+        "max_age":  0,
+    },
+    {
+        "name":     "FCAPS_DONE",
+        "subjects": ["fcaps.done.>"],
+        "storage":  StorageType.MEMORY,
+        "retention": RetentionPolicy.LIMITS,
+        "max_age":  1800,   # 30 minutes
+    },
+    {
+        "name":     "FCAPS_SIM",
+        "subjects": ["fcaps.sim.>"],
+        "storage":  StorageType.MEMORY,
+        "retention": RetentionPolicy.LIMITS,
+        "max_age":  3600,
+    },
 ]
 
 
-async def provision(js: JetStreamContext) -> None:
-    """Idempotently create all FCAPS streams."""
-    for cfg in STREAMS:
+async def provision_streams(nc: NATSClient) -> None:
+    """Idempotent — creates streams if they don't exist."""
+    js = nc.jetstream()
+    for cfg in _STREAMS:
+        stream_cfg = StreamConfig(
+            name=cfg["name"],
+            subjects=cfg["subjects"],
+            storage=cfg["storage"],
+            retention=cfg["retention"],
+            max_age=cfg["max_age"],
+        )
         try:
-            await js.find_stream(cfg.name)
-            log.info("nats_stream_exists", extra={"stream": cfg.name})
+            await js.find_stream(cfg["subjects"][0])
+            log.info("event=stream_exists name=%s", cfg["name"])
         except Exception:
-            await js.add_stream(cfg)
-            log.info("nats_stream_created", extra={"stream": cfg.name})
+            await js.add_stream(stream_cfg)
+            log.info("event=stream_created name=%s", cfg["name"])

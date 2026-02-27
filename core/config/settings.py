@@ -1,7 +1,6 @@
 from functools import lru_cache
-from typing import Literal
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -13,38 +12,39 @@ class Settings(BaseSettings):
     )
 
     # App
-    app_env: Literal["lab", "prod"] = "lab"
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    storage_mode: Literal["lab", "prod"] = "lab"
-    app_version: str = "1.0.0"
+    app_env: str = Field(default="lab", description="lab | prod")
+    app_version: str = Field(default="1.0.0")
+    log_level: str = Field(default="INFO")
+    storage_mode: str = Field(default="lab", description="lab | prod")
 
-    # Auth
-    jwt_secret: str
-    jwt_access_ttl_minutes: int = 15
-    jwt_refresh_ttl_days: int = 7
-    rate_limit_default: int = 60   # req/min
-    rate_limit_plugin: int = 600   # req/min for plugin API keys
+    # JWT
+    jwt_secret: str = Field(..., description="HS256 signing secret, min 32 chars")
+    jwt_access_ttl_minutes: int = Field(default=15)
+    jwt_refresh_ttl_days: int = Field(default=7)
+
+    # Rate limiting
+    rate_limit_default: int = Field(default=60, description="req/min for regular clients")
+    rate_limit_plugin: int = Field(default=600, description="req/min for plugin API keys")
 
     # NATS
-    nats_url: str = "nats://nats:4222"
+    nats_url: str = Field(default="nats://nats:4222")
 
     # Redis
-    redis_url: str = "redis://redis:6379"
+    redis_url: str = Field(default="redis://redis:6379")
 
     # InfluxDB
-    influx_url: str = "http://influxdb:8086"
-    influx_token: str
-    influx_org: str = "trishul"
-    influx_bucket: str = "fcaps_pm"
+    influx_url: str = Field(default="http://influxdb:8086")
+    influx_token: str = Field(...)
+    influx_org: str = Field(default="trishul")
+    influx_bucket: str = Field(default="fcaps_pm")
 
     # VictoriaLogs
-    victoria_url: str = "http://victorialogs:9428"
+    victoria_url: str = Field(default="http://victorialogs:9428")
 
     # SQLite
-    sqlite_path: str = "/data/fcaps.db"
+    sqlite_path: str = Field(default="/data/fcaps.db")
 
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Return cached Settings instance. Call once at startup, reuse everywhere."""
     return Settings()

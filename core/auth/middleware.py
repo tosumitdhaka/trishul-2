@@ -1,25 +1,17 @@
-"""Auth middleware — validates JWT or API Key on every non-public request.
+from __future__ import annotations
 
-Execution position: 3rd in middleware stack
-  RateLimitMiddleware → RequestLoggingMiddleware → AuthMiddleware → ErrorHandlerMiddleware
+import json
+from datetime import datetime, timezone
+from typing import Callable
 
-Public paths bypass auth entirely.
-All other requests must carry:
-  Authorization: Bearer <JWT>   OR
-  X-API-Key: <raw_key>
-
-On success: attaches request.state.user = { id, username/client_id, roles, auth_type }
-On failure: returns 401 TrishulResponse immediately.
-"""
-
+from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
-from core.auth.apikey_store import lookup_key_in_redis
-from core.auth.jwt_handler import AuthenticationError, decode_jwt
+from core.auth.apikey_store import is_blocklisted, lookup_api_key
+from core.auth.jwt_handler import decode_token
+from core.exceptions import AuthenticationError, AuthorizationError
 
-PUBLIC_PATHS = {
+PUBLIC_PATHS = frozenset([
     "/health",
     "/metrics",
     "/docs",
@@ -27,80 +19,68 @@ PUBLIC_PATHS = {
     "/redoc",
     "/api/v1/auth/login",
     "/api/v1/auth/refresh",
-}
+])
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
         if request.url.path in PUBLIC_PATHS:
             return await call_next(request)
 
-        # --- JWT Bearer ---
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
+        auth_header: str | None = request.headers.get("Authorization")
+        api_key_header: str | None = request.headers.get("X-API-Key")
+        redis = request.app.state.redis
+
+        if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
             try:
-                payload = decode_jwt(token)
-            except AuthenticationError as exc:
-                return _unauthorized(str(exc))
+                payload = decode_token(token)
+            except AuthenticationError:
+                return _unauthorized("Invalid or expired token")
 
-            # Check Redis blocklist (jti)
-            redis = request.app.state.redis
             jti = payload.get("jti", "")
-            if await redis.exists(f"blocklist:{jti}"):
+            if await is_blocklisted(redis, jti):
                 return _unauthorized("Token has been revoked")
 
             request.state.user = {
                 "id":        payload["sub"],
+                "username":  payload.get("usr", ""),
                 "roles":     payload.get("roles", []),
                 "auth_type": "jwt",
-                "token_type": payload.get("type", "access"),
+                "jti":       jti,
+                "exp":       payload.get("exp"),
             }
-            return await call_next(request)
 
-        # --- API Key ---
-        api_key = request.headers.get("X-API-Key", "")
-        if api_key:
-            redis = request.app.state.redis
-            key_meta = await lookup_key_in_redis(redis, api_key)
-            if not key_meta:
-                return _unauthorized("Invalid or revoked API key")
-
+        elif api_key_header:
+            client = await lookup_api_key(redis, api_key_header)
+            if client is None:
+                return _unauthorized("Invalid API key")
             request.state.user = {
-                "id":        key_meta["client_id"],
-                "roles":     key_meta["roles"],
-                "auth_type": "apikey",
+                "id":        client["client_id"],
+                "username":  client["client_id"],
+                "roles":     client["roles"],
+                "auth_type": "api_key",
             }
-            return await call_next(request)
+        else:
+            return _unauthorized("Authentication required")
 
-        return _unauthorized("Authentication required")
-
-
-def _unauthorized(message: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=401,
-        content={"success": False, "data": None, "error": message, "trace_id": None},
-    )
+        return await call_next(request)
 
 
-def require_role(*required_roles: str):
-    """FastAPI route dependency that enforces RBAC.
+def require_role(*roles: str):
+    """FastAPI dependency — raises 403 if user lacks required role."""
+    from fastapi import Depends
+    from core.dependencies import current_user
 
-    Usage:
-        @router.post("/admin-action")
-        async def admin_action(user=Depends(require_role("admin"))):
-            ...
-    """
-    from fastapi import Depends, HTTPException
-    from core.dependencies import get_current_user
-
-    def checker(user: dict = Depends(get_current_user)) -> dict:
-        user_roles = set(user.get("roles", []))
-        if not user_roles.intersection(required_roles):
-            raise HTTPException(
-                status_code=403,
-                detail=f"Insufficient permissions: requires one of {list(required_roles)}",
-            )
+    async def _check(user: dict = Depends(current_user)):
+        user_roles: list[str] = user.get("roles", [])
+        if not any(r in user_roles for r in ("admin", *roles)):
+            raise AuthorizationError(f"Requires one of roles: {list(roles)}")
         return user
 
-    return Depends(checker)
+    return Depends(_check)
+
+
+def _unauthorized(detail: str) -> Response:
+    body = json.dumps({"success": False, "error": detail, "data": None})
+    return Response(content=body, status_code=401, media_type="application/json")

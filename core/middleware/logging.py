@@ -1,38 +1,36 @@
-"""Request logging middleware — 2nd in stack.
+from __future__ import annotations
 
-Generates a UUID trace_id per request and attaches it to request.state.
-Logs JSON: method, path, status, client_ip, duration_ms, trace_id.
-"""
-
+import json
+import logging
 import time
 import uuid
-import logging
+from typing import Callable
 
+from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 
 log = logging.getLogger(__name__)
 
 
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
         trace_id = str(uuid.uuid4())
         request.state.trace_id = trace_id
 
-        t0 = time.monotonic()
+        start = time.perf_counter()
         response = await call_next(request)
-        duration_ms = round((time.monotonic() - t0) * 1000, 2)
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
         log.info(
-            "request_completed",
-            extra={
+            json.dumps({
+                "event":       "request_completed",
                 "trace_id":    trace_id,
                 "method":      request.method,
                 "path":        request.url.path,
-                "status":      response.status_code,
-                "client_ip":   request.client.host if request.client else "unknown",
+                "status_code": response.status_code,
                 "duration_ms": duration_ms,
-            },
+                "client_ip":   request.client.host if request.client else None,
+            })
         )
-        response.headers["X-Trace-Id"] = trace_id
+        response.headers["X-Trace-ID"] = trace_id
         return response

@@ -1,58 +1,48 @@
-"""Storage adapter ABCs.
-
-All route handlers and transformer writers use these interfaces.
-Never import InfluxDB or VictoriaLogs clients directly in handlers.
-"""
+from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from core.models.envelope import MessageEnvelope
 
 
 class MetricsStore(ABC):
-    """Time-series storage for PM metrics (InfluxDB in lab/prod)."""
+    """Abstract interface for Performance Management (PM) time-series writes/reads."""
 
     @abstractmethod
-    async def write_pm(self, envelope: MessageEnvelope) -> None:
-        """Write a PM envelope as an InfluxDB line protocol point."""
+    async def write_pm(self, envelope: MessageEnvelope) -> None: ...
 
     @abstractmethod
     async def query_pm(
         self,
         source_ne: str,
-        start: str,
-        end: str,
+        start: datetime,
+        end: datetime,
         metric_name: str | None = None,
-    ) -> list[dict]:
-        """Query PM metrics. start/end are InfluxDB duration strings (e.g. '-1h', 'now()')."""
+    ) -> list[dict]: ...
 
     @abstractmethod
-    async def health(self) -> bool:
-        """Return True if the storage backend is reachable."""
+    async def health(self) -> bool: ...
 
 
 class EventStore(ABC):
-    """Log/event storage for FM alarms and LOG entries (VictoriaLogs in lab/prod)."""
+    """Abstract interface for FM alarms and LOG entries."""
 
     @abstractmethod
-    async def write_fm(self, envelope: MessageEnvelope) -> None:
-        """Write an FM alarm envelope to VictoriaLogs."""
+    async def write_fm(self, envelope: MessageEnvelope) -> None: ...
 
     @abstractmethod
-    async def write_log(self, envelope: MessageEnvelope) -> None:
-        """Write a LOG entry envelope to VictoriaLogs."""
+    async def write_log(self, envelope: MessageEnvelope) -> None: ...
 
     @abstractmethod
     async def search(
         self,
         query: str,
         domain: str,
-        start: str,
-        end: str,
+        start: datetime,
+        end: datetime,
         limit: int = 100,
-    ) -> list[dict]:
-        """Search using LogsQL syntax. domain filters the _stream field."""
+    ) -> list[dict]: ...
 
     @abstractmethod
-    async def health(self) -> bool:
-        """Return True if the storage backend is reachable."""
+    async def health(self) -> bool: ...

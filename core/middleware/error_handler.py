@@ -1,59 +1,55 @@
-"""Global error handler middleware — 4th in stack (innermost, wraps handlers).
+from __future__ import annotations
 
-Catches all unhandled exceptions and maps them to TrishulResponse(success=False).
-No stack traces ever appear in API responses.
-All 5xx are logged with trace_id.
-"""
-
+import json
 import logging
 import traceback
+from typing import Callable
 
-from fastapi import HTTPException
+from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
+
+from core.exceptions import (
+    AuthenticationError,
+    AuthorizationError,
+    BusPublishError,
+    PluginNotFoundError,
+    RateLimitExceeded,
+    StorageError,
+    TrishulBaseError,
+)
 
 log = logging.getLogger(__name__)
 
-HTTP_STATUS_MAP = {
-    "AuthenticationError": 401,
-    "AuthorizationError":  403,
-    "RateLimitExceeded":   429,
-    "PluginNotFoundError": 404,
-    "BusPublishError":     503,
-    "StorageError":        503,
+_STATUS_MAP = {
+    AuthenticationError:  401,
+    AuthorizationError:   403,
+    RateLimitExceeded:    429,
+    PluginNotFoundError:  404,
+    BusPublishError:      503,
+    StorageError:         503,
 }
 
 
 class ErrorHandlerMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        trace_id = getattr(getattr(request, "state", None), "trace_id", None)
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        trace_id = getattr(request.state, "trace_id", None)
         try:
             return await call_next(request)
-        except HTTPException as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"success": False, "data": None, "error": exc.detail, "trace_id": trace_id},
+        except TrishulBaseError as exc:
+            status = _STATUS_MAP.get(type(exc), 400)
+            log.warning(
+                json.dumps({"event": "handled_error", "type": type(exc).__name__,
+                            "msg": str(exc), "trace_id": trace_id})
             )
-        except Exception as exc:
-            exc_type = type(exc).__name__
-            status   = HTTP_STATUS_MAP.get(exc_type, 500)
-            if status >= 500:
-                log.error(
-                    "unhandled_exception",
-                    extra={
-                        "trace_id":   trace_id,
-                        "exc_type":   exc_type,
-                        "path":       request.url.path,
-                        "traceback":  traceback.format_exc(),
-                    },
-                )
-            return JSONResponse(
-                status_code=status,
-                content={
-                    "success": False,
-                    "data":    None,
-                    "error":   str(exc) if status < 500 else "Internal server error",
-                    "trace_id": trace_id,
-                },
+            return _error_response(str(exc), status, trace_id)
+        except Exception:
+            log.error(
+                json.dumps({"event": "unhandled_error", "trace_id": trace_id,
+                            "traceback": traceback.format_exc()})
             )
+            return _error_response("Internal server error", 500, trace_id)
+
+
+def _error_response(msg: str, status: int, trace_id: str | None) -> Response:
+    body = json.dumps({"success": False, "error": msg, "data": None, "trace_id": trace_id})
+    return Response(content=body, status_code=status, media_type="application/json")

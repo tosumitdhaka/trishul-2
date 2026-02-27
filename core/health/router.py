@@ -1,102 +1,90 @@
-"""Health check router — GET /health
-
-3-state model: healthy | degraded | unhealthy
-  healthy    — all dependencies ok
-  degraded   — storage failure (InfluxDB or VictoriaLogs down); app still runs
-  unhealthy  — NATS or Redis down (critical path broken)
-
-Each dependency check has a 2-second timeout.
-"""
+from __future__ import annotations
 
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Literal
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import PlainTextResponse
 
 from core.config.settings import get_settings
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["platform"])
 
-DepStatus = Literal["ok", "error"]
-AppStatus = Literal["healthy", "degraded", "unhealthy"]
-
-TIMEOUT = 2.0   # seconds per dependency check
+_TIMEOUT = 2.0  # seconds per dependency check
 
 
-async def _check_nats(app) -> DepStatus:
+async def _check_nats(nc) -> dict:
     try:
-        client = app.state.nats_client
-        return "ok" if client and client.is_connected else "error"
-    except Exception:
-        return "error"
+        # JetStream account info is the lightest check
+        await asyncio.wait_for(nc.jetstream().find_stream("FCAPS_INGEST"), timeout=_TIMEOUT)
+        return {"status": "ok"}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
 
 
-async def _check_redis(app) -> DepStatus:
+async def _check_redis(r: aioredis.Redis) -> dict:
     try:
-        await asyncio.wait_for(app.state.redis.ping(), timeout=TIMEOUT)
-        return "ok"
-    except Exception:
-        return "error"
+        await asyncio.wait_for(r.ping(), timeout=_TIMEOUT)
+        return {"status": "ok"}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
 
 
-async def _check_influxdb(app) -> DepStatus:
+async def _check_storage(store) -> dict:
     try:
-        ok = await asyncio.wait_for(app.state.metrics_store.health(), timeout=TIMEOUT)
-        return "ok" if ok else "error"
-    except Exception:
-        return "error"
-
-
-async def _check_vlogs(app) -> DepStatus:
-    try:
-        ok = await asyncio.wait_for(app.state.event_store.health(), timeout=TIMEOUT)
-        return "ok" if ok else "error"
-    except Exception:
-        return "error"
+        ok = await asyncio.wait_for(store.health(), timeout=_TIMEOUT)
+        return {"status": "ok"} if ok else {"status": "error", "detail": "health() returned False"}
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
 
 
 @router.get("/health")
 async def health(request: Request):
     app = request.app
-
-    nats_s, redis_s, influx_s, vlogs_s = await asyncio.gather(
-        _check_nats(app),
-        _check_redis(app),
-        _check_influxdb(app),
-        _check_vlogs(app),
+    nats_r, redis_r, influx_r, vlogs_r = await asyncio.gather(
+        _check_nats(app.state.nats),
+        _check_redis(app.state.redis),
+        _check_storage(app.state.metrics_store),
+        _check_storage(app.state.event_store),
     )
 
-    # Determine overall status
-    if nats_s == "error" or redis_s == "error":
-        status: AppStatus = "unhealthy"
-    elif influx_s == "error" or vlogs_s == "error":
-        status = "degraded"
+    critical_down = nats_r["status"] == "error" or redis_r["status"] == "error"
+    storage_down  = influx_r["status"] == "error" or vlogs_r["status"] == "error"
+
+    if critical_down:
+        overall = "unhealthy"
+    elif storage_down:
+        overall = "degraded"
     else:
-        status = "healthy"
+        overall = "healthy"
 
-    # Plugin statuses
-    registry = getattr(app.state, "plugin_registry", None)
-    plugins  = {}
-    if registry:
-        for name, plugin in registry.plugins.items():
-            plugins[name] = {"status": "ok", "version": getattr(plugin, "version", "unknown")}
+    plugins = {
+        name: {"status": "ok", "version": p.version}
+        for name, p in app.state.plugin_registry.plugins.items()
+    }
 
-    body = {
-        "status":    status,
+    payload = {
+        "status":    overall,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version":   get_settings().app_version,
         "dependencies": {
-            "nats":         {"status": nats_s},
-            "redis":        {"status": redis_s},
-            "influxdb":     {"status": influx_s},
-            "victorialogs": {"status": vlogs_s},
+            "nats":         nats_r,
+            "redis":        redis_r,
+            "influxdb":     influx_r,
+            "victorialogs": vlogs_r,
         },
         "plugins": plugins,
     }
+    status_code = 200 if overall != "unhealthy" else 503
+    from fastapi.responses import JSONResponse
+    return JSONResponse(content=payload, status_code=status_code)
 
-    http_status = 200 if status in ("healthy", "degraded") else 503
-    return JSONResponse(status_code=http_status, content=body)
+
+@router.get("/metrics", response_class=PlainTextResponse)
+async def metrics(request: Request):
+    """Prometheus text format stub — real counters wired in core/app.py."""
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+    return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)

@@ -1,43 +1,32 @@
-"""Envelope publishing helpers.
-
-Plugins call publish_envelope() after validating inbound data.
-The raw payload + metadata are published to fcaps.ingest.{protocol}.
-"""
+from __future__ import annotations
 
 import json
 import logging
 
-from core.bus.client import get_js
+from nats.aio.client import Client as NATSClient
+
 from core.models.envelope import MessageEnvelope
 
 log = logging.getLogger(__name__)
 
 
-async def publish_envelope(envelope: MessageEnvelope) -> None:
-    """Publish a MessageEnvelope to fcaps.ingest.{protocol}.
-
-    The transformer-worker NATS consumer picks this up asynchronously.
-    HTTP handler returns 202 without waiting for this to complete processing.
+async def publish_envelope(
+    nc: NATSClient,
+    envelope: MessageEnvelope,
+    subject_prefix: str = "fcaps.ingest",
+) -> None:
     """
-    subject = f"fcaps.ingest.{envelope.protocol}"
+    Serialise and publish a MessageEnvelope to JetStream.
+
+    Subject: {subject_prefix}.{protocol}
+    e.g.  fcaps.ingest.webhook
+          fcaps.sim.snmp
+    """
+    subject = f"{subject_prefix}.{envelope.protocol}"
     payload = envelope.model_dump_json().encode()
-    js = get_js()
+    js = nc.jetstream()
     ack = await js.publish(subject, payload)
     log.info(
-        "envelope_ingested",
-        extra={
-            "envelope_id": envelope.id,
-            "protocol":    envelope.protocol,
-            "domain":      envelope.domain,
-            "subject":     subject,
-            "nats_seq":    ack.seq,
-        },
+        "event=envelope_ingested envelope_id=%s subject=%s seq=%s",
+        envelope.id, subject, ack.seq,
     )
-
-
-async def publish_sim(envelope: MessageEnvelope) -> None:
-    """Publish a simulated envelope to fcaps.sim.{protocol} for audit."""
-    subject = f"fcaps.sim.{envelope.protocol}"
-    payload = envelope.model_dump_json().encode()
-    js = get_js()
-    await js.publish(subject, payload)

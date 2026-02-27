@@ -1,204 +1,168 @@
-"""Auth router — /api/v1/auth/*
-
-Endpoints:
-  POST /login           → username + password → TokenPair
-  POST /refresh         → refresh JWT → new access token
-  POST /logout          → access JWT → add jti to Redis blocklist
-  GET  /me              → current user info
-  GET  /apikeys         → list API keys (admin)
-  POST /apikeys         → create API key (admin)
-  DELETE /apikeys/{id}  → revoke API key (admin)
-"""
+from __future__ import annotations
 
 import json
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Request
 from passlib.context import CryptContext
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from core.auth.apikey_store import (
-    cache_key_in_redis,
+    add_to_blocklist,
     generate_raw_key,
-    hash_key,
-    revoke_key_in_redis,
+    store_api_key,
 )
 from core.auth.jwt_handler import (
-    AuthenticationError,
-    decode_jwt,
-    encode_jwt,
-    token_remaining_seconds,
+    decode_token,
+    encode_access_token,
+    encode_refresh_token,
 )
+from core.auth.models import APIKey, User
 from core.auth.middleware import require_role
-from core.auth.models import APIKey, AuditLog, User
-from core.dependencies import CurrentUser
+from core.dependencies import current_user
+from core.exceptions import AuthenticationError
 from core.models.responses import TrishulResponse
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
-def get_db(request: Request):
-    return request.app.state.db
+# ---------- Request / Response schemas ----------
 
-
-# ─── Login ────────────────────────────────────────────────────────────────────────
-
-class LoginRequest(TrishulResponse):
-    pass  # placeholder import works; actual input defined below
-
-
-from pydantic import BaseModel
-
-
-class _LoginIn(BaseModel):
+class LoginRequest(BaseModel):
     username: str
     password: str
 
-
-class _TokenPair(BaseModel):
+class TokenPair(BaseModel):
     access_token:  str
     refresh_token: str
     token_type:    str = "bearer"
 
-
-@router.post("/login", response_model=TrishulResponse)
-def login(body: _LoginIn, request: Request, db: Session = Depends(get_db)):
-    user = db.exec(select(User).where(User.username == body.username)).first()
-    if not user or not pwd_ctx.verify(body.password, user.hashed_pw):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account disabled")
-
-    roles = json.loads(user.roles)
-    return TrishulResponse.ok(
-        data=_TokenPair(
-            access_token=encode_jwt(user.id, roles, "access"),
-            refresh_token=encode_jwt(user.id, roles, "refresh"),
-        ).model_dump()
-    )
-
-
-# ─── Refresh ──────────────────────────────────────────────────────────────────────
-
-@router.post("/refresh", response_model=TrishulResponse)
-async def refresh(request: Request):
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Refresh token required")
-    token = auth_header[7:]
-    try:
-        payload = decode_jwt(token)
-    except AuthenticationError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-    if payload.get("type") != "refresh":
-        raise HTTPException(status_code=401, detail="Not a refresh token")
-
-    redis = request.app.state.redis
-    if await redis.exists(f"blocklist:{payload['jti']}"):
-        raise HTTPException(status_code=401, detail="Refresh token revoked")
-
-    new_access = encode_jwt(payload["sub"], payload.get("roles", []), "access")
-    return TrishulResponse.ok(data={"access_token": new_access, "token_type": "bearer"})
-
-
-# ─── Logout ──────────────────────────────────────────────────────────────────────
-
-@router.post("/logout", response_model=TrishulResponse)
-async def logout(request: Request, user: CurrentUser):
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return TrishulResponse.ok(data={"logged_out": True})
-
-    token = auth_header[7:]
-    try:
-        payload = decode_jwt(token)
-    except AuthenticationError:
-        return TrishulResponse.ok(data={"logged_out": True})  # already invalid
-
-    jti = payload.get("jti", "")
-    ttl = token_remaining_seconds(payload)
-    if jti and ttl > 0:
-        redis = request.app.state.redis
-        await redis.setex(f"blocklist:{jti}", ttl, "1")
-
-    return TrishulResponse.ok(data={"logged_out": True})
-
-
-# ─── Me ────────────────────────────────────────────────────────────────────────────
-
-@router.get("/me", response_model=TrishulResponse)
-def me(user: CurrentUser):
-    return TrishulResponse.ok(data=user)
-
-
-# ─── API Keys ─────────────────────────────────────────────────────────────────────
-
-class _CreateKeyIn(BaseModel):
+class APIKeyCreate(BaseModel):
     client_id:   str
-    roles:       list[str] = ["viewer"]
-    description: str       = ""
-    rate_limit:  int       = 600
+    roles:       list[str]
+    description: str = ""
+    rate_limit:  int = 60
+
+class APIKeyResponse(BaseModel):
+    id:          str
+    client_id:   str
+    key:         str   # raw key — shown ONCE
+    roles:       list[str]
+    description: str
 
 
-@router.get("/apikeys", response_model=TrishulResponse, dependencies=[require_role("admin")])
-def list_apikeys(db: Session = Depends(get_db)):
-    keys = db.exec(select(APIKey).where(APIKey.is_active == True)).all()  # noqa: E712
-    return TrishulResponse.ok(data=[
-        {"id": k.id, "client_id": k.client_id, "roles": json.loads(k.roles),
-         "rate_limit": k.rate_limit, "description": k.description,
-         "created_at": k.created_at.isoformat()}
-        for k in keys
-    ])
+# ---------- Endpoints ----------
+
+@router.post("/login", response_model=TrishulResponse[TokenPair])
+async def login(body: LoginRequest, request: Request):
+    db: Session = request.app.state.db
+    stmt = select(User).where(User.username == body.username, User.is_active == True)  # noqa: E712
+    user = db.exec(stmt).first()
+    if not user or not _pwd.verify(body.password, user.hashed_pw):
+        raise AuthenticationError("Invalid username or password")
+    roles = json.loads(user.roles)
+    return TrishulResponse.ok(TokenPair(
+        access_token=encode_access_token(user.id, user.username, roles),
+        refresh_token=encode_refresh_token(user.id),
+    ))
 
 
-@router.post("/apikeys", response_model=TrishulResponse, dependencies=[require_role("admin")])
-async def create_apikey(
-    body: _CreateKeyIn,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    raw_key  = generate_raw_key()
-    key_hash = hash_key(raw_key)
+@router.post("/refresh", response_model=TrishulResponse[dict])
+async def refresh(request: Request):
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise AuthenticationError("Refresh token required")
+    payload = decode_token(auth[7:])
+    if payload.get("type") != "refresh":
+        raise AuthenticationError("Not a refresh token")
+    redis: aioredis.Redis = request.app.state.redis
+    if await redis.exists(f"blocklist:{payload['jti']}"):
+        raise AuthenticationError("Token revoked")
+    # Fetch fresh roles from DB
+    db: Session = request.app.state.db
+    user = db.exec(select(User).where(User.id == payload["sub"])).first()
+    if not user or not user.is_active:
+        raise AuthenticationError("User not found or inactive")
+    roles = json.loads(user.roles)
+    return TrishulResponse.ok({
+        "access_token": encode_access_token(user.id, user.username, roles),
+        "token_type": "bearer",
+    })
 
-    api_key = APIKey(
+
+@router.post("/logout", response_model=TrishulResponse[dict])
+async def logout(request: Request, user: dict = Depends(current_user)):
+    if user.get("auth_type") != "jwt":
+        return TrishulResponse.ok({"message": "API key sessions do not need explicit logout"})
+    jti = user.get("jti", "")
+    exp = user.get("exp", 0)
+    ttl = max(1, int(exp - datetime.now(timezone.utc).timestamp()))
+    redis: aioredis.Redis = request.app.state.redis
+    await add_to_blocklist(redis, jti, ttl)
+    return TrishulResponse.ok({"message": "Logged out successfully"})
+
+
+@router.get("/me", response_model=TrishulResponse[dict])
+async def me(user: dict = Depends(current_user)):
+    return TrishulResponse.ok({k: v for k, v in user.items() if k != "exp"})
+
+
+@router.post("/apikeys", response_model=TrishulResponse[APIKeyResponse],
+             dependencies=[require_role("admin")])
+async def create_api_key(body: APIKeyCreate, request: Request):
+    raw_key = generate_raw_key()
+    redis: aioredis.Redis = request.app.state.redis
+    await store_api_key(
+        redis, raw_key, body.client_id, body.roles,
+        body.rate_limit, body.description,
+    )
+    # Persist metadata to SQLite (hash only, never raw key)
+    db: Session = request.app.state.db
+    import hashlib
+    key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
+    api_key_row = APIKey(
+        id=str(uuid.uuid4()),
         client_id=body.client_id,
         key_hash=key_hash,
         roles=json.dumps(body.roles),
         rate_limit=body.rate_limit,
         description=body.description,
     )
-    db.add(api_key)
+    db.add(api_key_row)
     db.commit()
-    db.refresh(api_key)
-
-    # Cache in Redis for fast auth lookups
-    redis = request.app.state.redis
-    await cache_key_in_redis(redis, api_key)
-
-    return TrishulResponse.ok(data={
-        "id":      api_key.id,
-        "key":     raw_key,   # Shown ONCE. Not stored.
-        "message": "Store this key securely. It will not be shown again.",
-    })
+    return TrishulResponse.ok(APIKeyResponse(
+        id=api_key_row.id,
+        client_id=body.client_id,
+        key=raw_key,  # shown once
+        roles=body.roles,
+        description=body.description,
+    ))
 
 
-@router.delete("/apikeys/{key_id}", response_model=TrishulResponse, dependencies=[require_role("admin")])
-async def revoke_apikey(
-    key_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    api_key = db.get(APIKey, key_id)
+@router.get("/apikeys", response_model=TrishulResponse[list],
+            dependencies=[require_role("admin")])
+async def list_api_keys(request: Request):
+    db: Session = request.app.state.db
+    keys = db.exec(select(APIKey).where(APIKey.is_active == True)).all()  # noqa: E712
+    return TrishulResponse.ok([
+        {"id": k.id, "client_id": k.client_id, "roles": json.loads(k.roles),
+         "description": k.description, "created_at": str(k.created_at)}
+        for k in keys
+    ])
+
+
+@router.delete("/apikeys/{key_id}", response_model=TrishulResponse[dict],
+               dependencies=[require_role("admin")])
+async def revoke_api_key_endpoint(key_id: str, request: Request):
+    db: Session = request.app.state.db
+    api_key = db.exec(select(APIKey).where(APIKey.id == key_id)).first()
     if not api_key:
         raise HTTPException(status_code=404, detail="API key not found")
-
     api_key.is_active = False
     db.add(api_key)
     db.commit()
-
-    redis = request.app.state.redis
-    await revoke_key_in_redis(redis, api_key.key_hash)
-
-    return TrishulResponse.ok(data={"revoked": True, "id": key_id})
+    return TrishulResponse.ok({"message": "API key revoked"})

@@ -1,71 +1,53 @@
-"""JWT encode/decode helpers using python-jose.
-
-Token types:
-  access  — short-lived (default 15 min), used for API calls
-  refresh — long-lived (default 7 days), used only to get new access tokens
-
-Both tokens carry:
-  sub  — user_id
-  jti  — unique token ID (UUID) used for blocklist checks on logout
-  type — "access" | "refresh"
-  roles — list of role strings
-"""
+from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Any
 
 from jose import JWTError, jwt
 
 from core.config.settings import get_settings
+from core.exceptions import AuthenticationError
 
-ALGORITHM = "HS256"
-
-
-class AuthenticationError(Exception):
-    pass
+_ALGORITHM = "HS256"
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
+def _settings():
+    return get_settings()
 
 
-def encode_jwt(
-    user_id: str,
-    roles: list[str],
-    token_type: Literal["access", "refresh"],
-) -> str:
-    settings = get_settings()
-    if token_type == "access":
-        expire = _now() + timedelta(minutes=settings.jwt_access_ttl_minutes)
-    else:
-        expire = _now() + timedelta(days=settings.jwt_refresh_ttl_days)
-
+def encode_access_token(user_id: str, username: str, roles: list[str]) -> str:
+    s = _settings()
+    now = datetime.now(timezone.utc)
     payload = {
-        "sub":   user_id,
-        "jti":   str(uuid.uuid4()),
-        "type":  token_type,
+        "sub":  user_id,
+        "usr":  username,
         "roles": roles,
-        "exp":   expire,
-        "iat":   _now(),
+        "type": "access",
+        "jti":  str(uuid.uuid4()),
+        "iat":  now,
+        "exp":  now + timedelta(minutes=s.jwt_access_ttl_minutes),
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)
+    return jwt.encode(payload, s.jwt_secret, algorithm=_ALGORITHM)
 
 
-def decode_jwt(token: str) -> dict:
-    """Decode and validate a JWT. Raises AuthenticationError on any failure."""
-    settings = get_settings()
+def encode_refresh_token(user_id: str) -> str:
+    s = _settings()
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub":  user_id,
+        "type": "refresh",
+        "jti":  str(uuid.uuid4()),
+        "iat":  now,
+        "exp":  now + timedelta(days=s.jwt_refresh_ttl_days),
+    }
+    return jwt.encode(payload, s.jwt_secret, algorithm=_ALGORITHM)
+
+
+def decode_token(token: str) -> dict[str, Any]:
+    s = _settings()
     try:
-        payload = jwt.decode(token, settings.jwt_secret, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, s.jwt_secret, algorithms=[_ALGORITHM])
     except JWTError as exc:
-        raise AuthenticationError(str(exc)) from exc
+        raise AuthenticationError(f"Invalid or expired token: {exc}") from exc
     return payload
-
-
-def token_remaining_seconds(payload: dict) -> int:
-    """Returns seconds until expiry. Used to set Redis blocklist TTL."""
-    exp = payload.get("exp")
-    if not exp:
-        return 0
-    remaining = int(exp - _now().timestamp())
-    return max(remaining, 0)
