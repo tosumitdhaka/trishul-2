@@ -49,6 +49,7 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api.rule=PathPrefix(`/api`) || PathPrefix(`/docs`) || PathPrefix(`/openapi.json`) || Path(`/health`) || Path(`/metrics`) || PathPrefix(`/ws`)"
+      - "traefik.http.routers.api.priority=10"
       - "traefik.http.services.api.loadbalancer.server.port=8000"
     networks:
       - trishul-net
@@ -63,10 +64,139 @@ services:
       - core-api
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.ui.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.ui.rule=PathPrefix(`/`) && !PathPrefix(`/mfe`)"
       - "traefik.http.routers.ui.priority=1"
-      - "traefik.http.routers.api.priority=10"
       - "traefik.http.services.ui.loadbalancer.server.port=80"
+    networks:
+      - trishul-net
+
+  # ── MFE remotes ─────────────────────────────────────────────────────
+
+  fm-console:
+    build:
+      context: ./ui/mfe/fm-console
+      dockerfile: ../Dockerfile.mfe
+    mem_limit: 32m
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.fm-console.rule=PathPrefix(`/mfe/fm-console`)"
+      - "traefik.http.routers.fm-console.priority=5"
+      - "traefik.http.middlewares.fm-strip.stripprefix.prefixes=/mfe/fm-console"
+      - "traefik.http.routers.fm-console.middlewares=fm-strip"
+      - "traefik.http.services.fm-console.loadbalancer.server.port=80"
+    networks:
+      - trishul-net
+
+  pm-dashboard:
+    build:
+      context: ./ui/mfe/pm-dashboard
+      dockerfile: ../Dockerfile.mfe
+    mem_limit: 32m
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pm-dashboard.rule=PathPrefix(`/mfe/pm-dashboard`)"
+      - "traefik.http.routers.pm-dashboard.priority=5"
+      - "traefik.http.middlewares.pm-strip.stripprefix.prefixes=/mfe/pm-dashboard"
+      - "traefik.http.routers.pm-dashboard.middlewares=pm-strip"
+      - "traefik.http.services.pm-dashboard.loadbalancer.server.port=80"
+    networks:
+      - trishul-net
+
+  log-viewer:
+    build:
+      context: ./ui/mfe/log-viewer
+      dockerfile: ../Dockerfile.mfe
+    mem_limit: 32m
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.log-viewer.rule=PathPrefix(`/mfe/log-viewer`)"
+      - "traefik.http.routers.log-viewer.priority=5"
+      - "traefik.http.middlewares.log-strip.stripprefix.prefixes=/mfe/log-viewer"
+      - "traefik.http.routers.log-viewer.middlewares=log-strip"
+      - "traefik.http.services.log-viewer.loadbalancer.server.port=80"
+    networks:
+      - trishul-net
+
+  snmp-ui:
+    build:
+      context: ./ui/mfe/snmp-ui
+      dockerfile: ../Dockerfile.mfe
+    mem_limit: 32m
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.snmp-ui.rule=PathPrefix(`/mfe/snmp`)"
+      - "traefik.http.routers.snmp-ui.priority=5"
+      - "traefik.http.middlewares.snmp-strip.stripprefix.prefixes=/mfe/snmp"
+      - "traefik.http.routers.snmp-ui.middlewares=snmp-strip"
+      - "traefik.http.services.snmp-ui.loadbalancer.server.port=80"
+    networks:
+      - trishul-net
+
+  ves-ui:
+    build:
+      context: ./ui/mfe/ves-ui
+      dockerfile: ../Dockerfile.mfe
+    mem_limit: 32m
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ves-ui.rule=PathPrefix(`/mfe/ves`)"
+      - "traefik.http.routers.ves-ui.priority=5"
+      - "traefik.http.middlewares.ves-strip.stripprefix.prefixes=/mfe/ves"
+      - "traefik.http.routers.ves-ui.middlewares=ves-strip"
+      - "traefik.http.services.ves-ui.loadbalancer.server.port=80"
+    networks:
+      - trishul-net
+
+  webhook-ui:
+    build:
+      context: ./ui/mfe/webhook-ui
+      dockerfile: ../Dockerfile.mfe
+    mem_limit: 32m
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.webhook-ui.rule=PathPrefix(`/mfe/webhook`)"
+      - "traefik.http.routers.webhook-ui.priority=5"
+      - "traefik.http.middlewares.webhook-strip.stripprefix.prefixes=/mfe/webhook"
+      - "traefik.http.routers.webhook-ui.middlewares=webhook-strip"
+      - "traefik.http.services.webhook-ui.loadbalancer.server.port=80"
+    networks:
+      - trishul-net
+
+  protobuf-ui:
+    build:
+      context: ./ui/mfe/protobuf-ui
+      dockerfile: ../Dockerfile.mfe
+    mem_limit: 32m
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.protobuf-ui.rule=PathPrefix(`/mfe/protobuf`)"
+      - "traefik.http.routers.protobuf-ui.priority=5"
+      - "traefik.http.middlewares.proto-strip.stripprefix.prefixes=/mfe/protobuf"
+      - "traefik.http.routers.protobuf-ui.middlewares=proto-strip"
+      - "traefik.http.services.protobuf-ui.loadbalancer.server.port=80"
+    networks:
+      - trishul-net
+
+  sftp-avro-ui:
+    build:
+      context: ./ui/mfe/sftp-avro-ui
+      dockerfile: ../Dockerfile.mfe
+    mem_limit: 32m
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sftp-avro-ui.rule=PathPrefix(`/mfe/sftp`) || PathPrefix(`/mfe/avro`)"
+      - "traefik.http.routers.sftp-avro-ui.priority=5"
+      - "traefik.http.middlewares.sftp-strip.stripprefix.prefixes=/mfe/sftp,/mfe/avro"
+      - "traefik.http.routers.sftp-avro-ui.middlewares=sftp-strip"
+      - "traefik.http.services.sftp-avro-ui.loadbalancer.server.port=80"
     networks:
       - trishul-net
 

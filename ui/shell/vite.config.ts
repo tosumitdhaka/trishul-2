@@ -8,14 +8,16 @@ export default defineConfig({
     react(),
     federation({
       name: 'shell',
-      // remotes are loaded DYNAMICALLY at runtime from /api/v1/plugins/registry
-      // static remotes can be added here during Phase 5:
-      // remotes: { snmpUI: 'http://snmp-ui:5001/assets/remoteEntry.js' },
-      remotes: {},
+      remotes: {},  // Phase 5 remotes loaded dynamically at runtime via RemotePage
+      // Expose shared design system so MFE remotes can import it
+      exposes: {
+        './design-system': './src/design-system/index.ts',
+      },
       shared: {
         react:     { singleton: true, requiredVersion: '^18.0.0' },
         'react-dom': { singleton: true, requiredVersion: '^18.0.0' },
         zustand:   { singleton: true },
+        axios:     { singleton: true },
       },
     }),
   ],
