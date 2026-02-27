@@ -3,53 +3,54 @@ import { usePluginsStore } from '@/store/plugins';
 import { Suspense, useEffect, useState } from 'react';
 
 /**
- * Dynamically loads a Module Federation remote for a protocol plugin.
+ * Loads a Vite Module Federation remote using dynamic import().
  *
- * MFE vite configs use target:'es2015' which makes @originjs/vite-plugin-federation
- * emit an IIFE-style remoteEntry.js. The IIFE runs synchronously on load and
- * registers window[federation_name]. No import.meta, no ESM exports.
+ * @originjs/vite-plugin-federation@1.3.x with target:'esnext' emits
+ * standard ES module exports from remoteEntry.js — NOT window[name].
+ * The correct way to consume it is:
  *
- * federation_name comes verbatim from the registry API — it matches the
- * `name` field in each MFE's vite.config.ts federation() call exactly.
+ *   const mod = await import(/* @vite-ignore *\/ remoteUrl);
+ *   await mod.__federation_method_setRemote(name, { ... });
+ *   const component = await mod.__federation_method_getRemote(name, exposedModule);
+ *
+ * This bypasses window[name] entirely and works with ESM output.
  */
 async function loadRemoteModule(
   federationName: string,
-  remoteUrl:      string,
-  exposedModule:  string,
+  remoteUrl: string,
+  exposedModule: string,
 ): Promise<{ default: React.ComponentType }> {
-  await new Promise<void>((resolve, reject) => {
-    if (document.getElementById(`remote-${federationName}`)) { resolve(); return; }
-    const s    = document.createElement('script');
-    s.id       = `remote-${federationName}`;
-    s.src      = remoteUrl;
-    s.type     = 'text/javascript';   // IIFE output — classic script, no import.meta
-    s.onload   = () => resolve();
-    s.onerror  = () => reject(new Error(`Failed to fetch remoteEntry.js from ${remoteUrl}`));
-    document.head.appendChild(s);
-  });
-
+  // Dynamically import the remoteEntry.js as an ES module
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const container = (window as any)[federationName] as {
-    init: (shareScope: object) => Promise<void>;
-    get:  (mod: string) => Promise<() => { default: React.ComponentType }>;
-  } | undefined;
+  const remoteEntry: any = await import(/* @vite-ignore */ remoteUrl);
 
-  if (!container) {
+  // @originjs/vite-plugin-federation exposes helper methods on the module:
+  // __federation_method_setRemote  — registers the remote with its name + getter
+  // __federation_method_getRemote  — fetches the exposed module from it
+  // __federation_method_unwrapDefault — unwraps the default export correctly
+  const {
+    __federation_method_setRemote: setRemote,
+    __federation_method_getRemote: getRemote,
+    __federation_method_unwrapDefault: unwrapDefault,
+  } = remoteEntry;
+
+  if (!setRemote || !getRemote) {
     throw new Error(
-      `MFE container "${federationName}" not found on window.\n` +
-      `remoteEntry.js loaded from ${remoteUrl} but window.${federationName} is undefined.\n` +
-      `Check the federation({ name: '${federationName}' }) setting in the MFE's vite.config.ts.`,
+      `remoteEntry.js from ${remoteUrl} does not export __federation_method_setRemote / __federation_method_getRemote.\n` +
+      `Ensure @originjs/vite-plugin-federation is installed in the MFE and vite build succeeded.`,
     );
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const shareScope = (window as any).__federation_shared_scope__ ||
-                     (window as any).__webpack_share_scopes__?.default ||
-                     {};
-  try { await container.init(shareScope); } catch { /* already initialised */ }
+  // Register the remote so getRemote knows where to load chunks from
+  await setRemote(federationName, {
+    url: () => Promise.resolve(remoteUrl),
+    format: 'esm',
+    from: 'vite',
+  });
 
-  const factory = await container.get(exposedModule);
-  return factory();
+  // Load the exposed module (e.g. './WebhookModule')
+  const mod = await getRemote(federationName, exposedModule);
+  return unwrapDefault ? unwrapDefault(mod, true) : mod;
 }
 
 export default function RemotePage() {
@@ -65,7 +66,7 @@ export default function RemotePage() {
     setError(null);
     setRemoteComp(null);
     loadRemoteModule(plugin.federation_name, plugin.remote_url, plugin.exposed)
-      .then(mod => setRemoteComp(() => mod.default))
+      .then(mod => setRemoteComp(() => mod.default ?? (mod as any)))
       .catch(e  => setError(String(e)));
   }, [plugin?.federation_name, plugin?.remote_url, plugin?.exposed]);
 
@@ -98,10 +99,7 @@ export default function RemotePage() {
           <p>Exposed: <code className="font-mono text-white/50">{plugin.exposed}</code></p>
         </div>
         <button
-          onClick={() => {
-            document.getElementById(`remote-${plugin.federation_name}`)?.remove();
-            setError(null);
-          }}
+          onClick={() => setError(null)}
           className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded px-3 py-1.5 transition-colors"
         >
           ↺ Retry
