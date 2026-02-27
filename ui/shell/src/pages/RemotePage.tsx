@@ -23,11 +23,20 @@ async function loadRemoteModule(
     script.onerror  = reject;
     document.head.appendChild(script);
   });
+
+  // Vite Module Federation exposes the container on window under the federation name.
+  // The federation name in each MFE's vite.config matches the camelCase form below.
+  const federationName = remoteName
+    .replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()); // kebab → camelCase
+
   // @ts-expect-error — dynamic MFE container
-  const container = window[remoteName] as {
+  const container = window[federationName] as {
     init: (shareScope: object) => Promise<void>;
     get:  (mod: string) => Promise<() => { default: React.ComponentType }>;
   };
+
+  if (!container) throw new Error(`MFE container "${federationName}" not found on window`);
+
   // @ts-expect-error — __webpack_share_scopes__ not in types
   await container.init(__webpack_share_scopes__.default);
   const factory = await container.get(exposedModule);
@@ -43,9 +52,8 @@ export default function RemotePage() {
   const [error, setError]           = useState<string | null>(null);
 
   useEffect(() => {
-    // Only attempt MFE load when a real remote URL is present (Phase 5+).
-    // Empty string, undefined, or any non-http value → show Phase 4 placeholder.
-    if (!plugin?.remote_url?.startsWith('http') || !plugin.exposed) return;
+    if (!plugin?.remote_url?.startsWith('http') && !plugin?.remote_url?.startsWith('/mfe')) return;
+    if (!plugin.exposed) return;
     loadRemoteModule(plugin.name, plugin.remote_url, plugin.exposed)
       .then(mod => setRemoteComp(() => mod.default))
       .catch(e  => setError(String(e)));
@@ -61,7 +69,6 @@ export default function RemotePage() {
     );
   }
 
-  // Phase 5 — real MFE loaded
   if (RemoteComp) {
     return (
       <Suspense fallback={<div className="card animate-pulse h-64" />}>
@@ -72,20 +79,21 @@ export default function RemotePage() {
 
   if (error) {
     return (
-      <div className="card border border-severity-critical/30">
-        <p className="text-severity-critical text-sm">Failed to load remote module: {error}</p>
+      <div className="card border border-severity-critical/30 space-y-2">
+        <p className="text-severity-critical text-sm font-semibold">Failed to load MFE remote</p>
+        <p className="text-surface-200/50 text-xs font-mono">{error}</p>
+        <p className="text-surface-200/40 text-xs">Is the <code className="font-mono">{plugin.name}-ui</code> container running?</p>
       </div>
     );
   }
 
-  // Phase 4 placeholder — shows plugin metadata until Phase 5 MFEs are built
+  // Phase 4 placeholder
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold capitalize">{plugin.name} Plugin</h1>
         <span className="badge-cleared">v{plugin.version}</span>
       </div>
-
       <div className="grid grid-cols-3 gap-4">
         <div className="card">
           <p className="text-xs text-surface-200/50 uppercase tracking-wider mb-1">FCAPS Domains</p>
@@ -104,11 +112,13 @@ export default function RemotePage() {
           <p className="text-severity-cleared font-medium mt-2 text-sm">✅ Healthy</p>
         </div>
       </div>
-
       <div className="card">
-        <p className="text-xs text-surface-200/40 text-center py-4">
-          Protocol-specific UI will load here in Phase 5 (Module Federation remote).
-        </p>
+        <div className="flex items-center gap-3 py-2">
+          <div className="w-2 h-2 rounded-full bg-severity-warning animate-pulse" />
+          <p className="text-xs text-surface-200/40">
+            MFE container loading… ensure <code className="font-mono">{plugin.name}-ui</code> is running.
+          </p>
+        </div>
       </div>
     </div>
   );

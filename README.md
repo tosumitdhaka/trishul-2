@@ -159,6 +159,18 @@ trishul-2/
 │   ├── protobuf/            # Protobuf/gNMI plugin
 │   ├── avro/                # Apache Avro plugin
 │   └── sftp/                # SFTP file plugin
+├── ui/
+│   ├── shell/               # React host app (Phase 4)
+│   ├── mfe/                 # MFE remotes (Phase 5)
+│   │   ├── snmp-ui/         # SNMP plugin UI
+│   │   ├── ves-ui/          # VES plugin UI
+│   │   ├── webhook-ui/      # Webhook plugin UI
+│   │   ├── protobuf-ui/     # Protobuf/gNMI plugin UI
+│   │   ├── sftp-avro-ui/    # SFTP + Avro plugin UI (shared container)
+│   │   ├── fm-console/      # FM Alarm Console MFE
+│   │   ├── pm-dashboard/    # PM Dashboard MFE
+│   │   └── log-viewer/      # Log Viewer MFE
+│   └── shared/              # Shared types / utils
 ├── tests/                   # pytest suite (75 tests)
 ├── docs/                    # Phase docs + architecture
 ├── docker-compose.yml
@@ -177,6 +189,6 @@ trishul-2/
 | 1 — Core Foundation | ✅ Complete | FastAPI, auth, NATS, storage, middleware |
 | 2 — Transformer Engine | ✅ Complete | All readers, decoders, encoders, writers, schema registry |
 | 3 — Protocol Plugins | ✅ Complete | webhook, snmp, ves, protobuf, avro, sftp |
-| 4 — Shell UI | 🔵 Next | React + Module Federation dashboard |
-| 5 — Protocol UIs | ⚪ Queued | Per-plugin React micro-frontends |
+| 4 — Shell UI | ✅ Complete | React + Module Federation shell, dashboard, live event feed |
+| 5 — Protocol UIs | 🔵 In Progress | Per-plugin React MFEs with live WS feeds |
 | 6 — Observability | ⚪ Queued | Prometheus, Grafana, distributed tracing |

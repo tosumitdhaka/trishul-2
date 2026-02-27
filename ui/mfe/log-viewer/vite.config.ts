@@ -9,7 +9,6 @@ export default defineConfig({
       name: 'logViewer',
       filename: 'remoteEntry.js',
       exposes: { './LogViewerModule': './src/LogViewerModule.tsx' },
-      remotes: { shell: 'http://shell-ui/assets/remoteEntry.js' },
       shared: {
         react:       { singleton: true, requiredVersion: '^18.0.0' },
         'react-dom': { singleton: true, requiredVersion: '^18.0.0' },
@@ -17,5 +16,8 @@ export default defineConfig({
     }),
   ],
   build: { target: 'esnext', modulePreload: false, minify: false, cssCodeSplit: false },
-  server: { port: 5003 },
+  server: {
+    port: 5022,
+    proxy: { '/api': { target: 'http://core-api:8000', changeOrigin: true }, '/ws': { target: 'http://core-api:8000', ws: true, changeOrigin: true } },
+  },
 });

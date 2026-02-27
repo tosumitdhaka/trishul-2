@@ -3,6 +3,21 @@ from fastapi import APIRouter, Request
 
 router = APIRouter(tags=["plugins"])
 
+# Maps plugin name → (container path prefix, exposed module name)
+# sftp and avro share one container (sftp-avro-ui) but expose two modules.
+_MFE_MAP: dict[str, tuple[str, str]] = {
+    "snmp":     ("snmp",    "SnmpModule"),
+    "ves":      ("ves",     "VesModule"),
+    "webhook":  ("webhook", "WebhookModule"),
+    "protobuf": ("protobuf","ProtobufModule"),
+    "avro":     ("avro",    "AvroModule"),
+    "sftp":     ("sftp",    "SftpModule"),
+    # FCAPS-domain MFEs
+    "fm-console":   ("fm-console",  "FmConsoleModule"),
+    "pm-dashboard": ("pm-dashboard","PmDashboardModule"),
+    "log-viewer":   ("log-viewer",  "LogViewerModule"),
+}
+
 
 @router.get("/api/v1/plugins/registry")
 async def get_plugin_registry(request: Request):
@@ -10,10 +25,9 @@ async def get_plugin_registry(request: Request):
     plugins  = []
     for name, plugin in registry.plugins.items():
         meta = plugin.get_metadata()
-        # MFE remote URL convention: http://{name}-ui/assets/remoteEntry.js
-        # (resolved by Traefik on the internal Docker network)
-        meta["remote_url"] = f"/mfe/{name}/assets/remoteEntry.js"
-        meta["exposed"]    = f"./{name.capitalize()}Module"
+        path_prefix, module_name = _MFE_MAP.get(name, (name, f"{name.title()}Module"))
+        meta["remote_url"] = f"/mfe/{path_prefix}/assets/remoteEntry.js"
+        meta["exposed"]    = f"./{module_name}"
         meta["health"]     = "healthy"
         plugins.append(meta)
     return {"plugins": plugins, "count": len(plugins)}
