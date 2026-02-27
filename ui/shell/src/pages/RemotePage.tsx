@@ -5,29 +5,36 @@ import { Suspense, useEffect, useState } from 'react';
 /**
  * Dynamically loads a Module Federation remote for a protocol plugin.
  *
- * The key insight: Vite registers the MFE container on window[federation_name]
- * where federation_name is the `name` field in vite.config.ts federation().
- * We receive that name directly from the registry API (meta.federation_name)
- * and use it verbatim — no string transformation needed.
+ * remoteEntry.js is built by @originjs/vite-plugin-federation with target:'esnext',
+ * so it contains import.meta and top-level await — it MUST be loaded as type="module".
+ *
+ * The federation_name comes from the registry API (meta.federation_name) and matches
+ * the `name` field in each MFE's vite.config.ts federation() call exactly.
+ * Vite registers the container on window[federation_name] once the module executes.
  */
 async function loadRemoteModule(
   federationName: string,
   remoteUrl:      string,
   exposedModule:  string,
 ): Promise<{ default: React.ComponentType }> {
-  // Inject the remoteEntry.js script once
+  // Inject remoteEntry.js as a MODULE script (required for import.meta / ESM syntax)
   await new Promise<void>((resolve, reject) => {
-    if (document.getElementById(`remote-${federationName}`)) { resolve(); return; }
+    const existing = document.getElementById(`remote-${federationName}`);
+    if (existing) { resolve(); return; }
+
     const s    = document.createElement('script');
     s.id       = `remote-${federationName}`;
     s.src      = remoteUrl;
-    s.type     = 'text/javascript';
+    s.type     = 'module';          // ← critical: without this, import.meta blows up
     s.onload   = () => resolve();
     s.onerror  = () => reject(new Error(`Failed to fetch remoteEntry.js from ${remoteUrl}`));
     document.head.appendChild(s);
   });
 
-  // Grab the container Vite registered on window
+  // Vite MF registers the container on window[federationName] after the module runs.
+  // Give it a tick in case module evaluation is async.
+  await new Promise(r => setTimeout(r, 50));
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const container = (window as any)[federationName] as {
     init: (shareScope: object) => Promise<void>;
@@ -42,12 +49,12 @@ async function loadRemoteModule(
     );
   }
 
-  // Share React singleton across host and remote
+  // Initialise the shared scope (React singleton)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const shareScope = (window as any).__federation_shared_scope__ ||
                      (window as any).__webpack_share_scopes__?.default ||
                      {};
-  try { await container.init(shareScope); } catch { /* already initialised */ }
+  try { await container.init(shareScope); } catch { /* already initialised — ignore */ }
 
   const factory = await container.get(exposedModule);
   return factory();
@@ -100,7 +107,6 @@ export default function RemotePage() {
         </div>
         <button
           onClick={() => {
-            // Remove cached script tag so retry re-fetches remoteEntry.js
             document.getElementById(`remote-${plugin.federation_name}`)?.remove();
             setError(null);
           }}
@@ -112,7 +118,6 @@ export default function RemotePage() {
     );
   }
 
-  // Loading state
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
