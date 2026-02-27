@@ -1,6 +1,12 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
+import ReactDOM from 'react-dom/client';
+import './index.css';
 import VesModule from './VesModule';
 
-const root = document.getElementById('root')!;
-createRoot(root).render(<VesModule />);
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <div className="min-h-screen bg-gray-950 text-white p-6">
+      <VesModule />
+    </div>
+  </React.StrictMode>,
+);

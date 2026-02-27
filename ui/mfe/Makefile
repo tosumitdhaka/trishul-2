@@ -1,14 +1,20 @@
-# Build or dev all MFEs in parallel
-MFES := fm-console pm-dashboard log-viewer snmp-ui ves-ui webhook-ui protobuf-ui sftp-avro-ui
+# MFE build helpers
+# Run from repo root: make -C ui/mfe <target>
+# Or from ui/mfe/: make <target>
 
-.PHONY: install build dev
+MFES := snmp-ui ves-ui webhook-ui protobuf-ui sftp-avro-ui fm-console pm-dashboard log-viewer
+
+.PHONY: install build dev clean $(MFES)
 
 install:
-	@for m in $(MFES); do echo "\n==> npm install $$m" && cd $$m && npm install && cd ..; done
+	@for d in $(MFES); do echo "==> npm install $$d" && (cd $$d && npm install); done
 
 build:
-	@for m in $(MFES); do echo "\n==> build $$m" && cd $$m && npm run build && cd ..; done
+	@for d in $(MFES); do echo "==> build $$d" && (cd $$d && npm run build); done
 
-dev:
-	@for m in $(MFES); do cd $$m && npm run dev & cd ..; done
-	wait
+clean:
+	@for d in $(MFES); do rm -rf $$d/dist $$d/node_modules; done
+
+# Individual targets
+$(MFES):
+	cd $@ && npm install && npm run build

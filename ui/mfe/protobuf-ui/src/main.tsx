@@ -1,6 +1,12 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
+import ReactDOM from 'react-dom/client';
+import './index.css';
 import ProtobufModule from './ProtobufModule';
 
-const root = document.getElementById('root')!;
-createRoot(root).render(<ProtobufModule />);
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <div className="min-h-screen bg-gray-950 text-white p-6">
+      <ProtobufModule />
+    </div>
+  </React.StrictMode>,
+);

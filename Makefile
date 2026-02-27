@@ -1,69 +1,61 @@
-.PHONY: install install-dev up down restart logs test test-cov lint fmt typecheck shell clean
+.PHONY: help install-dev up down down-v logs logs-all test test-cov test-fast \
+        lint fmt typecheck shell run-local clean mfe-install mfe-build mfe-clean
 
-# ── Python env ────────────────────────────────────────────────────────────────
-install:
-	pip install -e .
+help:
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-install-dev:
+install-dev: ## Install app + dev dependencies
 	pip install -e ".[dev]"
 
-# ── Docker Compose ────────────────────────────────────────────────────────────
-up:
+up: ## Build and start all containers (core + MFEs)
 	docker compose up --build -d
 
-up-fg:
-	docker compose up --build
-
-down:
+down: ## Stop containers
 	docker compose down
 
-down-v:
-	docker compose down -v   # also removes volumes
+down-v: ## Stop containers + remove volumes
+	docker compose down -v
 
-restart:
-	docker compose restart core-api
-
-logs:
+logs: ## Tail core-api logs
 	docker compose logs -f core-api
 
-logs-all:
+logs-all: ## Tail all container logs
 	docker compose logs -f
 
-ps:
-	docker compose ps
-
-# ── Tests ─────────────────────────────────────────────────────────────────────
-test:
+test: ## Run all tests (no Docker needed)
 	pytest tests/ -v
 
-test-cov:
-	pytest tests/ -v --cov=core --cov=transformer --cov=plugins --cov-report=term-missing
+test-cov: ## Tests with coverage report
+	pytest tests/ -v --cov=. --cov-report=term-missing
 
-test-fast:
-	pytest tests/ -v -x   # stop on first failure
+test-fast: ## Stop on first failure
+	pytest tests/ -x -v
 
-# ── Code quality ──────────────────────────────────────────────────────────────
-lint:
-	ruff check core/ transformer/ plugins/ tests/
+lint: ## Ruff lint
+	ruff check .
 
-fmt:
-	ruff format core/ transformer/ plugins/ tests/
+fmt: ## Ruff auto-format
+	ruff format .
 
-fmt-check:
-	ruff format --check core/ transformer/ plugins/ tests/
+typecheck: ## Mypy type check
+	mypy . --ignore-missing-imports
 
-typecheck:
-	mypy core/ transformer/ plugins/
+shell: ## Shell into core-api container
+	docker compose exec core-api sh
 
-# ── Local dev ─────────────────────────────────────────────────────────────────
-shell:
-	docker compose exec core-api /bin/bash
+run-local: ## FastAPI with hot reload (needs .env)
+	uvicorn core.app:create_app --factory --reload --host 0.0.0.0 --port 8000
 
-run-local:
-	uvicorn core.app:app --reload --host 0.0.0.0 --port 8000
+mfe-install: ## Install npm deps for all MFEs
+	$(MAKE) -C ui/mfe install
 
-# ── Cleanup ───────────────────────────────────────────────────────────────────
-clean:
-	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete
-	rm -rf .pytest_cache .mypy_cache .ruff_cache dist build *.egg-info
+mfe-build: ## Build all MFEs locally
+	$(MAKE) -C ui/mfe build
+
+mfe-clean: ## Clean MFE dist + node_modules
+	$(MAKE) -C ui/mfe clean
+
+clean: ## Remove caches + build artefacts
+	rm -rf .pytest_cache .mypy_cache .ruff_cache __pycache__ \
+	       */__pycache__ */*/__pycache__ */*/*/__pycache__ \
+	       htmlcov .coverage dist build *.egg-info

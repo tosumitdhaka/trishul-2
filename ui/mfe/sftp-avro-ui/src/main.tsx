@@ -1,8 +1,15 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
+import ReactDOM from 'react-dom/client';
+import './index.css';
 import SftpModule from './SftpModule';
+import AvroModule from './AvroModule';
 
-// Default standalone entrypoint shows SFTP;
-// AvroModule is exposed separately via Module Federation
-const root = document.getElementById('root')!;
-createRoot(root).render(<SftpModule />);
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <div className="min-h-screen bg-gray-950 text-white p-6 space-y-8">
+      <SftpModule />
+      <hr className="border-white/10" />
+      <AvroModule />
+    </div>
+  </React.StrictMode>,
+);

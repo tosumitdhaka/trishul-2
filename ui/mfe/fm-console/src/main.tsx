@@ -1,7 +1,12 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
+import ReactDOM from 'react-dom/client';
+import './index.css';
 import FmConsoleModule from './FmConsoleModule';
 
-// Standalone dev entrypoint — not used by Module Federation consumers
-const root = document.getElementById('root')!;
-createRoot(root).render(<FmConsoleModule />);
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <div className="min-h-screen bg-gray-950 text-white p-6">
+      <FmConsoleModule />
+    </div>
+  </React.StrictMode>,
+);
