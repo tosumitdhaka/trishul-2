@@ -3,42 +3,52 @@ import { usePluginsStore } from '@/store/plugins';
 import { Suspense, useEffect, useState } from 'react';
 
 /**
- * RemotePage — dynamically loads a Module Federation remote for a protocol plugin.
+ * Dynamically loads a Module Federation remote for a protocol plugin.
  *
- * Phase 4: shows a placeholder card for each plugin (no remote MFEs exist yet).
- * Phase 5: when plugin.remote_url is a real URL, uses loadRemoteModule() to mount the MFE.
+ * The key insight: Vite registers the MFE container on window[federation_name]
+ * where federation_name is the `name` field in vite.config.ts federation().
+ * We receive that name directly from the registry API (meta.federation_name)
+ * and use it verbatim — no string transformation needed.
  */
 async function loadRemoteModule(
-  remoteName: string,
-  remoteUrl:  string,
-  exposedModule: string,
+  federationName: string,
+  remoteUrl:      string,
+  exposedModule:  string,
 ): Promise<{ default: React.ComponentType }> {
+  // Inject the remoteEntry.js script once
   await new Promise<void>((resolve, reject) => {
-    if (document.getElementById(`remote-${remoteName}`)) { resolve(); return; }
-    const script    = document.createElement('script');
-    script.id       = `remote-${remoteName}`;
-    script.src      = remoteUrl;
-    script.type     = 'text/javascript';
-    script.onload   = () => resolve();
-    script.onerror  = reject;
-    document.head.appendChild(script);
+    if (document.getElementById(`remote-${federationName}`)) { resolve(); return; }
+    const s    = document.createElement('script');
+    s.id       = `remote-${federationName}`;
+    s.src      = remoteUrl;
+    s.type     = 'text/javascript';
+    s.onload   = () => resolve();
+    s.onerror  = () => reject(new Error(`Failed to fetch remoteEntry.js from ${remoteUrl}`));
+    document.head.appendChild(s);
   });
 
-  // Vite Module Federation exposes the container on window under the federation name.
-  // The federation name in each MFE's vite.config matches the camelCase form below.
-  const federationName = remoteName
-    .replace(/-([a-z])/g, (_, c: string) => c.toUpperCase()); // kebab → camelCase
-
-  // @ts-expect-error — dynamic MFE container
-  const container = window[federationName] as {
+  // Grab the container Vite registered on window
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const container = (window as any)[federationName] as {
     init: (shareScope: object) => Promise<void>;
     get:  (mod: string) => Promise<() => { default: React.ComponentType }>;
-  };
+  } | undefined;
 
-  if (!container) throw new Error(`MFE container "${federationName}" not found on window`);
+  if (!container) {
+    throw new Error(
+      `MFE container "${federationName}" not found on window.\n` +
+      `remoteEntry.js loaded from ${remoteUrl} but window.${federationName} is undefined.\n` +
+      `Check the federation({ name: '${federationName}' }) setting in the MFE's vite.config.ts.`,
+    );
+  }
 
-  // @ts-expect-error — __webpack_share_scopes__ not in types
-  await container.init(__webpack_share_scopes__.default);
+  // Share React singleton across host and remote
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const shareScope = (window as any).__federation_shared_scope__ ||
+                     (window as any).__webpack_share_scopes__?.default ||
+                     {};
+  try { await container.init(shareScope); } catch { /* already initialised */ }
+
   const factory = await container.get(exposedModule);
   return factory();
 }
@@ -52,12 +62,13 @@ export default function RemotePage() {
   const [error, setError]           = useState<string | null>(null);
 
   useEffect(() => {
-    if (!plugin?.remote_url?.startsWith('http') && !plugin?.remote_url?.startsWith('/mfe')) return;
-    if (!plugin.exposed) return;
-    loadRemoteModule(plugin.name, plugin.remote_url, plugin.exposed)
+    if (!plugin?.remote_url || !plugin?.exposed || !plugin?.federation_name) return;
+    setError(null);
+    setRemoteComp(null);
+    loadRemoteModule(plugin.federation_name, plugin.remote_url, plugin.exposed)
       .then(mod => setRemoteComp(() => mod.default))
       .catch(e  => setError(String(e)));
-  }, [plugin]);
+  }, [plugin?.federation_name, plugin?.remote_url, plugin?.exposed]);
 
   if (!plugin) {
     return (
@@ -79,15 +90,29 @@ export default function RemotePage() {
 
   if (error) {
     return (
-      <div className="card border border-severity-critical/30 space-y-2">
-        <p className="text-severity-critical text-sm font-semibold">Failed to load MFE remote</p>
-        <p className="text-surface-200/50 text-xs font-mono">{error}</p>
-        <p className="text-surface-200/40 text-xs">Is the <code className="font-mono">{plugin.name}-ui</code> container running?</p>
+      <div className="card border border-severity-critical/30 space-y-3 p-4">
+        <p className="text-severity-critical text-sm font-semibold">⚠ Failed to load MFE remote</p>
+        <pre className="text-surface-200/50 text-xs font-mono whitespace-pre-wrap break-all bg-black/30 rounded p-3">{error}</pre>
+        <div className="text-surface-200/30 text-xs space-y-1">
+          <p>Container: <code className="font-mono text-white/50">{plugin.federation_name}</code></p>
+          <p>URL: <code className="font-mono text-white/50">{plugin.remote_url}</code></p>
+          <p>Exposed: <code className="font-mono text-white/50">{plugin.exposed}</code></p>
+        </div>
+        <button
+          onClick={() => {
+            // Remove cached script tag so retry re-fetches remoteEntry.js
+            document.getElementById(`remote-${plugin.federation_name}`)?.remove();
+            setError(null);
+          }}
+          className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded px-3 py-1.5 transition-colors"
+        >
+          ↺ Retry
+        </button>
       </div>
     );
   }
 
-  // Phase 4 placeholder
+  // Loading state
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -98,7 +123,7 @@ export default function RemotePage() {
         <div className="card">
           <p className="text-xs text-surface-200/50 uppercase tracking-wider mb-1">FCAPS Domains</p>
           <div className="flex flex-wrap gap-1 mt-2">
-            {plugin.domains.map(d => <span key={d} className="badge-info">{d}</span>)}
+            {plugin.domains?.map(d => <span key={d} className="badge-info">{d}</span>)}
           </div>
         </div>
         <div className="card">
@@ -108,15 +133,15 @@ export default function RemotePage() {
           </div>
         </div>
         <div className="card">
-          <p className="text-xs text-surface-200/50 uppercase tracking-wider mb-1">Status</p>
-          <p className="text-severity-cleared font-medium mt-2 text-sm">✅ Healthy</p>
+          <p className="text-xs text-surface-200/50 uppercase tracking-wider mb-1">Remote</p>
+          <p className="text-white/40 font-mono text-xs mt-2 break-all">{plugin.remote_url}</p>
         </div>
       </div>
       <div className="card">
-        <div className="flex items-center gap-3 py-2">
-          <div className="w-2 h-2 rounded-full bg-severity-warning animate-pulse" />
+        <div className="flex items-center gap-3 py-1">
+          <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
           <p className="text-xs text-surface-200/40">
-            MFE container loading… ensure <code className="font-mono">{plugin.name}-ui</code> is running.
+            Loading <code className="font-mono text-white/50">{plugin.federation_name}</code>…
           </p>
         </div>
       </div>

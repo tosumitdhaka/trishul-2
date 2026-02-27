@@ -1,33 +1,37 @@
 import { create } from 'zustand';
 import axios from 'axios';
 
-export interface PluginMeta {
-  name:       string;
-  version:    string;
-  domains:    string[];
-  protocols:  string[];
-  health:     'healthy' | 'degraded' | 'unknown';
-  remote_url?: string;   // set in Phase 5 when MFE remotes exist
-  exposed?:    string;   // Module Federation exposed module, e.g. "./SNMPModule"
+export interface Plugin {
+  name:            string;
+  version:         string;
+  domains:         string[];
+  protocols?:      string[];
+  remote_url?:     string;
+  exposed?:        string;
+  federation_name?: string;   // window key Vite registers the MFE container under
+  health?:         string;
+  [key: string]:   unknown;
 }
 
 interface PluginsState {
-  plugins:   PluginMeta[];
-  loaded:    boolean;
-  fetch:     () => Promise<void>;
+  plugins:     Plugin[];
+  loading:     boolean;
+  error:       string | null;
+  fetchPlugins: () => Promise<void>;
 }
 
 export const usePluginsStore = create<PluginsState>((set) => ({
-  plugins: [],
-  loaded:  false,
+  plugins:  [],
+  loading:  false,
+  error:    null,
 
-  fetch: async () => {
+  fetchPlugins: async () => {
+    set({ loading: true, error: null });
     try {
-      const res = await axios.get('/api/v1/plugins/registry');
-      set({ plugins: res.data.plugins ?? [], loaded: true });
-    } catch {
-      // graceful degradation — shell still works without registry
-      set({ loaded: true });
+      const res = await axios.get<{ plugins: Plugin[] }>('/api/v1/plugins/registry');
+      set({ plugins: res.data.plugins, loading: false });
+    } catch (e: unknown) {
+      set({ error: (e as Error).message, loading: false });
     }
   },
 }));
