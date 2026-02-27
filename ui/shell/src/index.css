@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+  body {
+    @apply bg-surface-950 text-white font-sans antialiased;
+    margin: 0;
+  }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { @apply bg-surface-900; }
+  ::-webkit-scrollbar-thumb { @apply bg-surface-200 rounded-full opacity-40; }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface-900 border border-surface-200/10 rounded-xl p-4;
+  }
+  .badge-critical { @apply bg-severity-critical/20 text-severity-critical text-xs font-medium px-2 py-0.5 rounded-full; }
+  .badge-major    { @apply bg-severity-major/20    text-severity-major    text-xs font-medium px-2 py-0.5 rounded-full; }
+  .badge-minor    { @apply bg-severity-minor/20    text-severity-minor    text-xs font-medium px-2 py-0.5 rounded-full; }
+  .badge-cleared  { @apply bg-severity-cleared/20  text-severity-cleared  text-xs font-medium px-2 py-0.5 rounded-full; }
+  .badge-info     { @apply bg-surface-200/10       text-surface-200/60    text-xs font-medium px-2 py-0.5 rounded-full; }
+}

@@ -1,6 +1,6 @@
 # Phase 4 — Shell UI
 
-**Status**: ⚪ Planned  
+**Status**: ✅ Complete  
 **Depends on**: Phase 1 (Core Foundation)  
 **Prerequisite for**: Phase 5 (Protocol UIs)
 
@@ -12,99 +12,95 @@ Build the Trishul frontend shell: the host application that dynamically loads pr
 
 ---
 
-## Technology Stack
+## Tech Stack
 
-| Layer | Technology | Reason |
-|-------|------------|--------|
-| Framework | React 19 + Vite | Fastest HMR, Module Federation via vite-plugin-federation |
-| Module Federation | vite-plugin-federation | Lightweight Vite-native MFE host |
-| Component library | shadcn/ui + Tailwind CSS | Unstyled primitives = consistent design across all modules |
-| Charts | Recharts + D3.js | PM trend lines, FM heatmaps, log timelines |
-| State | Zustand | Lightweight, works across federated modules |
-| Real-time | WebSocket (FastAPI native) | Live FM alerts, PM streams, log tailing |
-| HTTP client | Axios + React Query | Caching, loading states, error handling |
+| Layer | Technology |
+|-------|------------|
+| Framework | React 18 + Vite 5 |
+| MFE host | `@originjs/vite-plugin-federation` |
+| UI | shadcn/ui conventions + Tailwind CSS 3 |
+| Charts | Recharts |
+| State | Zustand 5 |
+| Real-time | FastAPI WebSocket (`/ws/events`) |
+| HTTP | Axios + TanStack Query v5 |
+| Serve | nginx:1.27-alpine (multi-stage Docker) |
 
 ---
 
-## Shell Structure
+## File Structure
 
 ```
-frontend/shell/
+ui/shell/
 ├── src/
-│   ├── App.tsx                   ← Dynamic nav from GET /api/v1/plugins/registry
-│   ├── layout/
-│   │   ├── Sidebar.tsx            ← Auto-populated from plugin registry
-│   │   ├── Topbar.tsx             ← User info, notifications bell
-│   │   └── NotificationPanel.tsx  ← Real-time FM/PM alerts via WebSocket
-│   ├── design-system/
-│   │   ├── tokens.ts              ← Colors, spacing, typography
-│   │   ├── components/            ← Button, Badge, Card, Table, Modal (shadcn)
-│   │   └── tailwind.config.ts     ← Shared Tailwind config (exported to remotes)
+│   ├── main.tsx                  ← React root + QueryClient
+│   ├── App.tsx                   ← Routes + RequireAuth guard
+│   ├── index.css                 ← Tailwind base + card/badge utilities
 │   ├── store/
-│   │   ├── auth.ts                ← JWT token, user, roles
-│   │   ├── events.ts              ← Live NATS→WS event buffer
-│   │   └── plugins.ts             ← Loaded plugin registry
+│   │   ├── auth.ts               ← JWT login/logout (persisted)
+│   │   ├── events.ts             ← Live event ring buffer (200 events)
+│   │   └── plugins.ts            ← Plugin registry state
 │   ├── ws/
-│   │   └── client.ts              ← WebSocket connection + reconnect logic
-│   └── routes/
-│       └── index.tsx              ← Dynamic routes for MFE modules
-├── vite.config.ts                 ← Module Federation host config
-└── Dockerfile
+│   │   └── client.ts             ← WS connect/reconnect/message parse
+│   ├── layout/
+│   │   ├── ShellLayout.tsx       ← Root layout (Sidebar + Topbar + Outlet)
+│   │   ├── Sidebar.tsx           ← Auto-nav from plugin registry
+│   │   ├── Topbar.tsx            ← Health dots, bell, user, logout
+│   │   └── NotificationPanel.tsx ← Slide-in FM alert list
+│   └── pages/
+│       ├── LoginPage.tsx         ← JWT login form
+│       ├── DashboardPage.tsx     ← Stats, charts, live event feed
+│       ├── PluginsPage.tsx       ← Registry table
+│       ├── SettingsPage.tsx      ← Platform config (Phase 6)
+│       ├── ProfilePage.tsx       ← User info + sign-out
+│       └── RemotePage.tsx        ← MFE loader (Phase 4: placeholder, Phase 5: live)
+├── vite.config.ts                ← MFE host + dev proxy
+├── tailwind.config.ts            ← Design tokens (brand, severity, surface)
+├── nginx.conf                    ← SPA fallback + asset caching
+└── Dockerfile                    ← node:20-alpine build + nginx serve
 ```
 
 ---
 
-## Module Federation — Dynamic Plugin Loading
+## Backend additions
 
-The shell reads `/api/v1/plugins/registry` on startup and loads each plugin's Remote MFE:
-
-```typescript
-// Shell auto-discovers and mounts any plugin UI at runtime
-const plugins = await fetch('/api/v1/plugins/registry').then(r => r.json());
-// Each plugin entry:
-// { name: "snmp", version: "1.0", remote_url: "http://snmp-ui:5173/remoteEntry.js", exposed: "./SNMPModule" }
-```
-
-No Shell rebuild needed when a new protocol plugin is deployed.
+- `core/ws/router.py` — `ConnectionManager` + `/ws/events` WebSocket endpoint
+- `core/ws/__init__.py`
+- `core/app.py` — mounts `ws_router` at root
+- `docker-compose.yml` — adds `shell-ui` service + Traefik priority routing
 
 ---
 
-## Notification System
+## Traefik Routing
 
-All FM alarms, pipeline completions, and errors are pushed via WebSocket from the `fcaps.done.*` NATS subjects:
-
-```
-NATS fcaps.done.fm
-  → FastAPI WebSocket broadcaster
-    → Shell NotificationPanel (toast + panel)
-    → Zustand events store
-      → FM Console remote module (live table update)
-```
+| Priority | Rule | Service |
+|----------|------|---------|
+| 10 | `/api/*`, `/docs`, `/health`, `/ws/*` | core-api:8000 |
+| 1  | `/` (catch-all) | shell-ui:80 |
 
 ---
 
-## Built-in Shell Pages
+## Module Federation — Phase 4 vs Phase 5
 
-| Route | Component | Description |
-|-------|-----------|-------------|
-| `/` | Dashboard | Summary cards: active alarms, PM ingestion rate, recent logs |
-| `/plugins` | Plugin Registry | All loaded plugins, health, version |
-| `/profile` | User Profile | Token info, roles, API key management |
-| `/settings` | Settings | App config, storage status, NATS status |
-
-Protocol-specific pages (`/snmp`, `/ves`, `/pm`, `/fm`, `/logs`) are loaded as Remote MFEs from Phase 5.
+| | Phase 4 | Phase 5 |
+|---|---|---|
+| Remote MFEs | None | `snmp-ui`, `ves-ui`, etc. |
+| Plugin pages | Placeholder card | Full React app loaded at runtime |
+| Shell rebuild needed? | No | No — dynamic `remoteEntry.js` injection |
 
 ---
 
-## Deliverables Checklist
+## Deliverables
 
-- [ ] Vite + React 19 project scaffold with vite-plugin-federation (host)
-- [ ] Tailwind + shadcn/ui design system tokens
-- [ ] Shell layout: Sidebar (dynamic nav) + Topbar + NotificationPanel
-- [ ] Zustand stores: auth, events, plugins
-- [ ] WebSocket client with auto-reconnect + event buffering
-- [ ] Dynamic route loader for MFE modules
-- [ ] Dashboard page (summary cards)
-- [ ] Plugin registry page
-- [ ] JWT login page (token stored in memory + httpOnly cookie refresh)
-- [ ] Dockerfile (multi-stage: node:20-alpine build + nginx serve)
+- [x] Vite + React 18 + vite-plugin-federation scaffold
+- [x] Tailwind design tokens (brand, severity, surface)
+- [x] ShellLayout: Sidebar + Topbar + NotificationPanel
+- [x] Zustand stores: auth (persist), events (ring buffer), plugins
+- [x] WebSocket client: auto-connect, exponential backoff, message parse
+- [x] Dynamic sidebar nav from plugin registry
+- [x] Dashboard: stat cards, FM timeline chart, severity bar, protocol bars, live feed
+- [x] Plugin registry table page
+- [x] Login page (JWT)
+- [x] RemotePage: Phase 4 placeholder + Phase 5 MFE loader
+- [x] nginx SPA config + multi-stage Dockerfile
+- [x] docker-compose: shell-ui service + Traefik priority routing
+- [x] `core/ws/router.py` WebSocket broadcaster
