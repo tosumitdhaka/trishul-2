@@ -1,10 +1,9 @@
 """Auth router: login, refresh, logout, me, apikeys CRUD."""
-import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+import bcrypt
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.auth.jwt_handler import decode_jwt, encode_jwt, make_token_pair
@@ -12,6 +11,7 @@ from core.auth.models import User
 from core.config.settings import get_settings
 from core.models.responses import TrishulResponse, ok, accepted
 from core.exceptions import AuthenticationError
+from core.db import verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -32,22 +32,15 @@ class APIKeyCreateRequest(BaseModel):
     rate_limit:  int  = 60
 
 
-def _sha256_pre_hash(secret: str) -> str:
-    """Must match the pre-hash used in db.py seed."""
-    return hashlib.sha256(secret.encode()).hexdigest()
-
-
 @router.post("/login")
 async def login(body: LoginRequest, request: Request):
-    from passlib.context import CryptContext
-    from sqlmodel import Session, select
+    from sqlmodel import select
     from core.db import get_session
 
-    pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
     with get_session() as session:
         user = session.exec(select(User).where(User.username == body.username)).first()
 
-    if not user or not pwd_ctx.verify(_sha256_pre_hash(body.password), user.hashed_pw):
+    if not user or not verify_password(body.password, user.hashed_pw):
         raise AuthenticationError("Invalid credentials")
     if not user.is_active:
         raise AuthenticationError("Account disabled")

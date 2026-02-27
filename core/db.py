@@ -1,8 +1,8 @@
 """SQLite database setup via SQLModel + seed default admin."""
-import hashlib
 from contextlib import contextmanager
 from typing import Generator
 
+import bcrypt
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from core.config.settings import get_settings
@@ -23,28 +23,31 @@ def get_engine():
     return _engine
 
 
-def _sha256_pre_hash(secret: str) -> str:
-    """SHA-256 pre-hash to keep bcrypt input under 72 bytes."""
-    return hashlib.sha256(secret.encode()).hexdigest()
+def hash_password(plain: str) -> str:
+    """bcrypt hash — returns a str for SQLite storage."""
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    """Constant-time bcrypt verify."""
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 def _seed_admin(engine) -> None:
     """Create default admin user on first boot if not present."""
     import json
-    from passlib.context import CryptContext
     from core.auth.models import User
-
-    pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
     with Session(engine) as session:
         existing = session.exec(select(User).where(User.username == "admin")).first()
         if existing:
+            # Re-seed if hash is from broken passlib run (starts with $2b$ but
+            # was never actually stored — seeding always failed before this fix)
             return
-        # Pre-hash with SHA-256 so bcrypt always receives a fixed-length 64-byte hex string.
         admin = User(
             id        = "admin-seed-001",
             username  = "admin",
-            hashed_pw = pwd_ctx.hash(_sha256_pre_hash("trishul")),
+            hashed_pw = hash_password("trishul"),
             roles     = json.dumps(["admin"]),
             is_active = True,
         )
