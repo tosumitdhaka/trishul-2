@@ -18,7 +18,7 @@ dependencies = [
     "pydantic==2.10.4",
     "pydantic-settings==2.7.0",
 
-    # Auth — PyJWT replaces python-jose (no utcnow() deprecation warnings)
+    # Auth
     "PyJWT[crypto]==2.10.1",
     "passlib[bcrypt]==1.7.4",
 
@@ -35,8 +35,13 @@ dependencies = [
     # InfluxDB
     "influxdb-client[async]==1.47.0",
 
-    # HTTP client (VictoriaLogs + WebhookWriter)
+    # HTTP client (VictoriaLogs + WebhookWriter + HTTPPollReader)
     "httpx==0.28.1",
+
+    # Transformer — format decoders/encoders
+    "xmltodict==0.14.2",
+    "fastavro==1.10.0",
+    "paramiko==3.5.1",
 
     # Structured logging
     "structlog==24.4.0",
@@ -50,7 +55,7 @@ dev = [
     "pytest==8.3.4",
     "pytest-asyncio==0.24.0",
     "pytest-cov==6.0.0",
-    "httpx==0.28.1",        # TestClient
+    "httpx==0.28.1",
     "anyio==4.7.0",
     "ruff==0.8.6",
     "mypy==1.13.0",
