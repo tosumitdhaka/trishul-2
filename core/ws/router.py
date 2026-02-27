@@ -54,5 +54,7 @@ async def ws_events(websocket: WebSocket):
 
 
 async def broadcast_envelope(envelope_dict: dict) -> None:
-    """Called by NotificationService whenever a fcaps.done.* message arrives."""
-    await manager.broadcast(json.dumps(envelope_dict))
+    """Called by NotificationService whenever a fcaps.done.* message arrives.
+    Uses default=str so datetime / enum values serialise cleanly.
+    """
+    await manager.broadcast(json.dumps(envelope_dict, default=str))

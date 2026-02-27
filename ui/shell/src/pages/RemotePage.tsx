@@ -1,19 +1,18 @@
 import { useParams } from 'react-router-dom';
 import { usePluginsStore } from '@/store/plugins';
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 
 /**
  * RemotePage — dynamically loads a Module Federation remote for a protocol plugin.
  *
  * Phase 4: shows a placeholder card for each plugin (no remote MFEs exist yet).
- * Phase 5: when `plugin.remote_url` is set, uses loadRemoteModule() to mount the real MFE.
+ * Phase 5: when plugin.remote_url is a real URL, uses loadRemoteModule() to mount the MFE.
  */
 async function loadRemoteModule(
   remoteName: string,
   remoteUrl:  string,
   exposedModule: string,
 ): Promise<{ default: React.ComponentType }> {
-  // Inject the remote entry script dynamically
   await new Promise<void>((resolve, reject) => {
     if (document.getElementById(`remote-${remoteName}`)) { resolve(); return; }
     const script    = document.createElement('script');
@@ -44,7 +43,9 @@ export default function RemotePage() {
   const [error, setError]           = useState<string | null>(null);
 
   useEffect(() => {
-    if (!plugin?.remote_url || !plugin.exposed) return;
+    // Only attempt MFE load when a real remote URL is present (Phase 5+).
+    // Empty string, undefined, or any non-http value → show Phase 4 placeholder.
+    if (!plugin?.remote_url?.startsWith('http') || !plugin.exposed) return;
     loadRemoteModule(plugin.name, plugin.remote_url, plugin.exposed)
       .then(mod => setRemoteComp(() => mod.default))
       .catch(e  => setError(String(e)));
@@ -53,12 +54,14 @@ export default function RemotePage() {
   if (!plugin) {
     return (
       <div className="card text-center py-12">
-        <p className="text-surface-200/40 text-sm">Plugin <code className="font-mono">{pluginName}</code> not found in registry.</p>
+        <p className="text-surface-200/40 text-sm">
+          Plugin <code className="font-mono">{pluginName}</code> not found in registry.
+        </p>
       </div>
     );
   }
 
-  // Phase 5 MFE loaded
+  // Phase 5 — real MFE loaded
   if (RemoteComp) {
     return (
       <Suspense fallback={<div className="card animate-pulse h-64" />}>
@@ -75,7 +78,7 @@ export default function RemotePage() {
     );
   }
 
-  // Phase 4 placeholder — shows plugin metadata until Phase 5 MFEs are ready
+  // Phase 4 placeholder — shows plugin metadata until Phase 5 MFEs are built
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
