@@ -1,6 +1,6 @@
 # Phase 3 — Protocol Plugins
 
-**Status**: ⚪ Planned  
+**Status**: ✅ Complete  
 **Depends on**: Phase 1 (Core Foundation), Phase 2 (Transformer Engine)  
 **Prerequisite for**: Phase 5 (Protocol UIs)
 
@@ -14,26 +14,49 @@ Implement all protocol-specific plugins as thin wrappers over the Phase 2 Transf
 
 ## Plugin Contract
 
-Every plugin must:
-1. Implement `FCAPSPlugin` base class and export a `plugin` instance
-2. Register its own `APIRouter` at `plugins/{name}/router.py`
-3. Assemble pipelines exclusively from Phase 2 stage implementations
-4. Normalize all events to `MessageEnvelope` before any NATS publish
-5. Declare its FCAPS domains: `["FM"]`, `["PM"]`, or `["FM", "PM", "LOG"]`
-6. Expose `GET /api/v1/{name}/health` and plugin-level Prometheus metrics
+Every plugin implements `FCAPSPlugin` and provides:
+- `get_router()` → `APIRouter`
+- `get_nats_subjects()` → `list[str]`
+- `get_metadata()` → `dict`
+- `on_startup(**kwargs)` — registers decoder/writer with `pipeline_registry`
+- `on_shutdown()` — graceful teardown
+- Module-level `plugin = XPlugin()` instance
+- `__init__.py` uses lazy import (`def get_plugin()`) — no eager instantiation
 
 ---
 
-## Planned Plugins
+## Plugins Delivered
 
-| Plugin | Protocol | FCAPS Domain | Inbound | Outbound (Sim) |
-|--------|----------|-------------|---------|----------------|
-| `snmp` | SNMP v1/v2c/v3 | FM, PM | Trap receiver, SNMP GET poller | Trap generator, GET simulator |
-| `ves` | VES 7.x JSON | FM, PM, LOG | HTTP POST endpoint | VES event generator |
-| `protobuf` | Protobuf (gNMI/custom) | PM | NATS/gRPC consumer | Protobuf publisher |
-| `avro` | Apache Avro | PM, LOG | SFTP / NATS pull | Avro file writer |
-| `webhook` | JSON over HTTP | FM, LOG | HTTP POST endpoint | HTTP POST sender |
-| `sftp` | File over SFTP | PM, LOG | SFTP poll / push trigger | SFTP file upload |
+| Plugin | Protocol | FCAPS Domains | Decoder | Ingest Subject | Sim Subject |
+|--------|----------|---------------|---------|----------------|-------------|
+| `webhook` | JSON/HTTP | FM, LOG | `JSONDecoder` | `fcaps.ingest.webhook` | `fcaps.simulated.webhook` |
+| `snmp` | SNMP v2c | FM, PM | `SNMPDecoder` | `fcaps.ingest.snmp` | `fcaps.simulated.snmp` |
+| `ves` | VES 7.x | FM, PM, LOG | `VESDecoder` | `fcaps.ingest.ves` | `fcaps.simulated.ves` |
+| `protobuf` | Protobuf/gNMI | PM | `ProtobufDecoder` | `fcaps.ingest.protobuf` | `fcaps.simulated.protobuf` |
+| `avro` | Apache Avro | PM, LOG | `JSONDecoder` (dict) | `fcaps.ingest.avro` | `fcaps.simulated.avro` |
+| `sftp` | SFTP/file | PM, LOG | `JSONDecoder` | `fcaps.ingest.sftp` | `fcaps.simulated.sftp` |
+
+---
+
+## Shared Simulator Base
+
+`plugins/shared/simulator_base.py` — `SimulatorBase` ABC:
+- `generate_batch(count, **kwargs)` → `list[dict]`
+- `now_iso()` → UTC ISO timestamp string
+- `new_id()` → UUID4 string
+
+All plugin simulators extend this and implement `_generate_one(index, **kwargs)`.
+
+---
+
+## Standard Endpoints (per plugin)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/{proto}/receive` | Ingest event → pipeline → NATS (202) |
+| POST | `/api/v1/{proto}/simulate` | Generate synthetic events → pipeline → NATS |
+| GET | `/api/v1/{proto}/status/{id}` | Envelope status from Redis |
+| GET | `/api/v1/{proto}/health` | Plugin health |
 
 ---
 
@@ -41,56 +64,33 @@ Every plugin must:
 
 ```
 plugins/
-└── snmp/
-    ├── __init__.py       ← exports plugin = SNMPPlugin()
-    ├── router.py         ← /api/v1/snmp/* endpoints
-    ├── models.py         ← SNMPTrap, SNMPGetRequest Pydantic models
-    ├── config.py         ← SNMPSettings (extends BaseSettings)
-    ├── simulator.py      ← synthetic trap / metric generator
-    └── pipeline.py       ← assemble TransformPipeline for SNMP
-```
-
----
-
-## Standard Plugin API Pattern
-
-Every plugin exposes a consistent set of endpoints:
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/v1/{proto}/receive` | Accept inbound message (ingest + NATS publish) |
-| POST | `/api/v1/{proto}/send` | Send outbound message to target |
-| POST | `/api/v1/{proto}/simulate` | Generate synthetic messages |
-| GET | `/api/v1/{proto}/status/{envelope_id}` | Processing status for a message |
-| GET | `/api/v1/{proto}/health` | Plugin health check |
-
----
-
-## SNMP Plugin (Reference Detail)
-
-```
-Inbound trap flow:
-  UDP :162 (pysnmp TrapReceiver)
-    → SNMPDecoder → FCAPSNormalizer
-    → NATS publish: fcaps.ingest.snmp
-    → Worker: TransformPipeline → VictoriaLogs (FM) or InfluxDB (PM)
-
-Simulate flow:
-  POST /api/v1/snmp/simulate { trap_type, target_host, count, interval }
-    → SNMPSimulator generates TrapPDU(s)
-    → TransformPipeline(SNMPDecoder, FCAPSNormalizer, JSONEncoder, NATSWriter)
-    → NATS publish: fcaps.simulated.snmp
+├── shared/
+│   └── simulator_base.py     ← SimulatorBase ABC
+├── webhook/                  ← Phase 1 scaffold, promoted to full plugin
+│   ├── __init__.py           ← lazy get_plugin()
+│   ├── config.py
+│   ├── models.py
+│   ├── simulator.py
+│   ├── router.py
+│   └── plugin.py             ← WebhookPlugin(FCAPSPlugin)
+├── snmp/                     ← same structure
+├── ves/
+├── protobuf/
+├── avro/
+└── sftp/
 ```
 
 ---
 
 ## Deliverables Checklist
 
-- [ ] SNMP plugin (trap receiver + simulator + GET poller)
-- [ ] VES plugin (HTTP receiver + event generator)
-- [ ] Protobuf plugin (NATS consumer + publisher)
-- [ ] Avro plugin (SFTP pull + file writer)
-- [ ] Webhook plugin (HTTP POST receiver + sender) ← promoted from Phase 1 scaffold
-- [ ] SFTP plugin (poll + push)
-- [ ] Shared simulator base class (synthetic data generators)
-- [ ] Plugin integration tests (receive → NATS → storage)
+- [x] `plugins/shared/simulator_base.py` — SimulatorBase ABC
+- [x] `webhook` plugin — promoted from Phase 1 scaffold, full FCAPSPlugin contract
+- [x] `snmp` plugin — trap receive, simulate (5 trap types), pipeline
+- [x] `ves` plugin — VES 7.x receive, simulate (fault/measurement), pipeline
+- [x] `protobuf` plugin — receive, simulate (gNMI-style metrics), pipeline
+- [x] `avro` plugin — receive, simulate (PM records), pipeline
+- [x] `sftp` plugin — receive, simulate (file-based PM), pipeline; registers SFTPReader + SFTPWriter
+- [x] `tests/test_plugin_simulators.py` — 9 tests across all 5 simulators + SimulatorBase
+- [x] `tests/test_plugin_snmp.py` — 4 tests: batch gen, linkUp/Down, pipeline run, simulate endpoint
+- [x] `tests/test_plugin_ves.py` — 4 tests: fault/measurement gen, pipeline run, simulate endpoint

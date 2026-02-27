@@ -10,10 +10,10 @@ A lab-grade platform for simulating, ingesting, parsing, normalizing, and visual
 - **Redis** — JWT blocklist, API key store, rate limiting, dedup cache
 - **InfluxDB** — PM (Performance Management) time-series metrics
 - **VictoriaLogs** — FM (Fault Management) alarms + structured logs
-- **SQLite** — users, API keys, audit log (embedded in core-api)
+- **SQLite** — users, API keys, audit log, schema registry (embedded in core-api)
 - **Traefik** — reverse proxy, single host-exposed port (80)
 
-See [`docs/architecture.md`](docs/architecture.md) for full system design, data flows, and user flows.
+See [`docs/architecture.md`](docs/architecture.md) for full system design.
 
 ---
 
@@ -39,55 +39,23 @@ INFLUX_TOKEN=<run: python -c "import secrets; print(secrets.token_hex(24))">
 ### 2. Start all containers
 ```bash
 make up
-# or: docker compose up --build -d
-```
-
-Services come up in dependency order. Check status:
-```bash
-make ps
-# or: docker compose ps
 ```
 
 ### 3. Verify
 ```bash
 curl http://localhost/health
-# Expected: {"status": "healthy", ...}
-
-curl http://localhost/docs
-# OpenAPI UI
+curl http://localhost/docs       # OpenAPI UI
 ```
 
 ---
 
-## Development Setup (Tests + Local Run)
+## Development Setup
 
-### Install dependencies
 ```bash
-# Create and activate virtualenv first (recommended)
-python -m venv .venv
-source .venv/bin/activate      # Linux/macOS
-# .venv\Scripts\activate       # Windows
-
-# Install app + dev dependencies
+python -m venv .venv && source .venv/bin/activate
 make install-dev
-# equivalent: pip install -e ".[dev]"
-```
-
-### Run tests (no Docker needed)
-```bash
-make test
-# or: pytest tests/ -v
-```
-
-### Run with coverage
-```bash
-make test-cov
-```
-
-### Run locally (Docker infra up, app local)
-```bash
-make up          # start infra containers only
-make run-local   # run FastAPI with --reload
+make test           # 75 passed, no Docker needed
+make test-cov       # with coverage report
 ```
 
 ---
@@ -96,24 +64,68 @@ make run-local   # run FastAPI with --reload
 
 | Command | Description |
 |---------|-------------|
-| `make install` | Install app dependencies only |
-| `make install-dev` | Install app + dev dependencies (pytest, ruff, mypy) |
-| `make up` | Build and start all containers (detached) |
-| `make up-fg` | Start containers in foreground |
+| `make install-dev` | Install app + dev dependencies |
+| `make up` | Build and start all containers |
 | `make down` | Stop containers |
-| `make down-v` | Stop containers and remove volumes |
-| `make restart` | Restart core-api only |
+| `make down-v` | Stop containers + remove volumes |
 | `make logs` | Tail core-api logs |
 | `make logs-all` | Tail all container logs |
 | `make test` | Run all tests |
-| `make test-cov` | Run tests with coverage report |
-| `make test-fast` | Run tests, stop on first failure |
-| `make lint` | Ruff lint check |
+| `make test-cov` | Tests with coverage report |
+| `make test-fast` | Stop on first failure |
+| `make lint` | Ruff lint |
 | `make fmt` | Ruff auto-format |
-| `make typecheck` | Mypy type check |
+| `make typecheck` | Mypy |
 | `make shell` | Shell into core-api container |
-| `make run-local` | Run FastAPI locally with hot reload |
-| `make clean` | Remove `__pycache__`, `.pytest_cache`, build artefacts |
+| `make run-local` | FastAPI with hot reload |
+| `make clean` | Remove caches + build artefacts |
+
+---
+
+## API Endpoints
+
+### Auth
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/auth/login` | — | Login → JWT pair |
+| POST | `/api/v1/auth/refresh` | Refresh JWT | New access token |
+| POST | `/api/v1/auth/logout` | Bearer | Blocklist token |
+| GET | `/api/v1/auth/me` | Bearer | Current user |
+| POST | `/api/v1/auth/apikeys` | admin | Create API key |
+| GET | `/api/v1/auth/apikeys` | admin | List API keys |
+| DELETE | `/api/v1/auth/apikeys/{id}` | admin | Revoke API key |
+
+### Protocol Plugins (all 6 follow same pattern)
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/{proto}/receive` | Ingest event → 202 |
+| POST | `/api/v1/{proto}/simulate` | Generate synthetic events |
+| GET | `/api/v1/{proto}/status/{id}` | Envelope status |
+| GET | `/api/v1/{proto}/health` | Plugin health |
+
+`{proto}` = `webhook` \| `snmp` \| `ves` \| `protobuf` \| `avro` \| `sftp`
+
+### Transformer Engine
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/transform/run` | Sync pipeline → envelope |
+| POST | `/api/v1/transform/submit` | Async job → job_id |
+| GET | `/api/v1/transform/jobs/{id}` | Job status |
+| GET | `/api/v1/transform/stages` | Registered stages |
+
+### Schema Registry
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/schemas` | Register Avro/Protobuf schema |
+| GET | `/api/v1/schemas` | List all schemas |
+| GET | `/api/v1/schemas/{id}` | Get schema |
+| DELETE | `/api/v1/schemas/{id}` | Remove schema |
+
+### Platform
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Full dependency health |
+| GET | `/docs` | OpenAPI UI |
 
 ---
 
@@ -123,66 +135,48 @@ make run-local   # run FastAPI with --reload
 trishul-2/
 ├── core/                    # Controller + shared foundation
 │   ├── app.py               # FastAPI factory + lifespan
-│   ├── config/settings.py   # All env var config (pydantic-settings)
 │   ├── auth/                # JWT, API keys, RBAC middleware
-│   ├── bus/                 # NATS client, stream provisioner, publisher
+│   ├── bus/                 # NATS client, streams, publisher
 │   ├── storage/             # InfluxDB + VictoriaLogs adapters
 │   ├── middleware/          # RateLimit, Logging, ErrorHandler
 │   ├── models/              # MessageEnvelope, TrishulResponse
 │   ├── health/              # GET /health
-│   └── notifications/       # NATS fcaps.done.> → storage dispatch
-├── transformer/             # Pipeline stages (ABCs in Phase 1, impls in Phase 2)
-│   ├── base.py              # Reader/Decoder/Normalizer/Encoder/Writer ABCs
+│   └── notifications/       # NATS fcaps.done.> → storage
+├── transformer/             # Transformer Engine (Phase 2)
+│   ├── readers/             # file, webhook, http_poll, nats, sftp
+│   ├── decoders/            # json, csv, xml, ves, snmp, protobuf, avro
+│   ├── encoders/            # json, csv, protobuf, avro
+│   ├── writers/             # nats, influxdb, victorialogs, webhook, sftp, csv
 │   ├── pipeline.py          # TransformPipeline + PipelineRegistry
-│   └── normalizer.py        # FCAPSNormalizer (implemented, shared)
-├── plugins/
-│   └── webhook/             # Reference plugin (Phase 1)
-├── tests/                   # pytest suite
-├── docs/                    # Architecture + phase docs
+│   ├── normalizer.py        # FCAPSNormalizer
+│   ├── schema_registry.py   # SQLite Avro/Protobuf schema store
+│   └── router.py            # /api/v1/transform/* + /api/v1/schemas/*
+├── plugins/                 # Protocol plugins (Phase 3)
+│   ├── shared/              # SimulatorBase ABC
+│   ├── webhook/             # JSON/HTTP plugin
+│   ├── snmp/                # SNMP v2c trap plugin
+│   ├── ves/                 # VES 7.x plugin
+│   ├── protobuf/            # Protobuf/gNMI plugin
+│   ├── avro/                # Apache Avro plugin
+│   └── sftp/                # SFTP file plugin
+├── tests/                   # pytest suite (75 tests)
+├── docs/                    # Phase docs + architecture
 ├── docker-compose.yml
 ├── Dockerfile
 ├── pyproject.toml
-├── .env.example
-└── Makefile
+├── Makefile
+└── .env.example
 ```
 
 ---
 
-## API Endpoints (Phase 1)
-
-### Auth
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/v1/auth/login` | None | Login → JWT token pair |
-| POST | `/api/v1/auth/refresh` | Refresh JWT | New access token |
-| POST | `/api/v1/auth/logout` | Bearer JWT | Blocklist token |
-| GET | `/api/v1/auth/me` | Bearer JWT | Current user info |
-| POST | `/api/v1/auth/apikeys` | admin | Create API key |
-| GET | `/api/v1/auth/apikeys` | admin | List API keys |
-| DELETE | `/api/v1/auth/apikeys/{id}` | admin | Revoke API key |
-
-### Webhook Plugin
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/v1/webhook/receive` | operator | Ingest event → 202 |
-| POST | `/api/v1/webhook/send` | operator | POST to target URL |
-| POST | `/api/v1/webhook/simulate` | operator | Generate synthetic events |
-| GET | `/api/v1/webhook/status/{id}` | operator | Envelope status |
-| GET | `/api/v1/webhook/health` | None | Plugin health |
-
-### Platform
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | None | Full dependency health |
-| GET | `/docs` | None | OpenAPI UI |
-
----
-
-## Phases
+## Phase Roadmap
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| 1 — Core Foundation | 🟡 In Progress | Framework, auth, bus, storage, webhook plugin |
-| 2 — Transformer Engine | 🔵 Design Frozen | Decoders, encoders, readers, writers |
-| 3 — Protocol Plugins | ⚪ Not Started | SNMP, VES, Protobuf, Avro, SFTP |
-| 4 — Shell UI | ⚪ Not Started | React + Module Federation dashboard |
+| 1 — Core Foundation | ✅ Complete | FastAPI, auth, NATS, storage, middleware |
+| 2 — Transformer Engine | ✅ Complete | All readers, decoders, encoders, writers, schema registry |
+| 3 — Protocol Plugins | ✅ Complete | webhook, snmp, ves, protobuf, avro, sftp |
+| 4 — Shell UI | 🔵 Next | React + Module Federation dashboard |
+| 5 — Protocol UIs | ⚪ Queued | Per-plugin React micro-frontends |
+| 6 — Observability | ⚪ Queued | Prometheus, Grafana, distributed tracing |
