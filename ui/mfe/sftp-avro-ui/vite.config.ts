@@ -18,7 +18,7 @@ export default defineConfig({
       },
     }),
   ],
-  build: { target: 'esnext', modulePreload: false, minify: false, cssCodeSplit: false },
+  build: { target: 'es2015', modulePreload: false, minify: false, cssCodeSplit: false },
   server: {
     port: 5030,
     proxy: { '/api': { target: 'http://core-api:8000', changeOrigin: true }, '/ws': { target: 'http://core-api:8000', ws: true, changeOrigin: true } },

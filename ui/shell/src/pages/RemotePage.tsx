@@ -5,35 +5,28 @@ import { Suspense, useEffect, useState } from 'react';
 /**
  * Dynamically loads a Module Federation remote for a protocol plugin.
  *
- * remoteEntry.js is built by @originjs/vite-plugin-federation with target:'esnext',
- * so it contains import.meta and top-level await — it MUST be loaded as type="module".
+ * MFE vite configs use target:'es2015' which makes @originjs/vite-plugin-federation
+ * emit an IIFE-style remoteEntry.js. The IIFE runs synchronously on load and
+ * registers window[federation_name]. No import.meta, no ESM exports.
  *
- * The federation_name comes from the registry API (meta.federation_name) and matches
- * the `name` field in each MFE's vite.config.ts federation() call exactly.
- * Vite registers the container on window[federation_name] once the module executes.
+ * federation_name comes verbatim from the registry API — it matches the
+ * `name` field in each MFE's vite.config.ts federation() call exactly.
  */
 async function loadRemoteModule(
   federationName: string,
   remoteUrl:      string,
   exposedModule:  string,
 ): Promise<{ default: React.ComponentType }> {
-  // Inject remoteEntry.js as a MODULE script (required for import.meta / ESM syntax)
   await new Promise<void>((resolve, reject) => {
-    const existing = document.getElementById(`remote-${federationName}`);
-    if (existing) { resolve(); return; }
-
+    if (document.getElementById(`remote-${federationName}`)) { resolve(); return; }
     const s    = document.createElement('script');
     s.id       = `remote-${federationName}`;
     s.src      = remoteUrl;
-    s.type     = 'module';          // ← critical: without this, import.meta blows up
+    s.type     = 'text/javascript';   // IIFE output — classic script, no import.meta
     s.onload   = () => resolve();
     s.onerror  = () => reject(new Error(`Failed to fetch remoteEntry.js from ${remoteUrl}`));
     document.head.appendChild(s);
   });
-
-  // Vite MF registers the container on window[federationName] after the module runs.
-  // Give it a tick in case module evaluation is async.
-  await new Promise(r => setTimeout(r, 50));
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const container = (window as any)[federationName] as {
@@ -49,12 +42,11 @@ async function loadRemoteModule(
     );
   }
 
-  // Initialise the shared scope (React singleton)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const shareScope = (window as any).__federation_shared_scope__ ||
                      (window as any).__webpack_share_scopes__?.default ||
                      {};
-  try { await container.init(shareScope); } catch { /* already initialised — ignore */ }
+  try { await container.init(shareScope); } catch { /* already initialised */ }
 
   const factory = await container.get(exposedModule);
   return factory();
