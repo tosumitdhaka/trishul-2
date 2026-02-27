@@ -1,4 +1,5 @@
 """SQLite database setup via SQLModel + seed default admin."""
+import hashlib
 from contextlib import contextmanager
 from typing import Generator
 
@@ -22,6 +23,11 @@ def get_engine():
     return _engine
 
 
+def _sha256_pre_hash(secret: str) -> str:
+    """SHA-256 pre-hash to keep bcrypt input under 72 bytes."""
+    return hashlib.sha256(secret.encode()).hexdigest()
+
+
 def _seed_admin(engine) -> None:
     """Create default admin user on first boot if not present."""
     import json
@@ -34,12 +40,13 @@ def _seed_admin(engine) -> None:
         existing = session.exec(select(User).where(User.username == "admin")).first()
         if existing:
             return
+        # Pre-hash with SHA-256 so bcrypt always receives a fixed-length 64-byte hex string.
         admin = User(
-            id         = "admin-seed-001",
-            username   = "admin",
-            hashed_pw  = pwd_ctx.hash("trishul"),
-            roles      = json.dumps(["admin"]),
-            is_active  = True,
+            id        = "admin-seed-001",
+            username  = "admin",
+            hashed_pw = pwd_ctx.hash(_sha256_pre_hash("trishul")),
+            roles     = json.dumps(["admin"]),
+            is_active = True,
         )
         session.add(admin)
         session.commit()

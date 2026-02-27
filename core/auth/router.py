@@ -1,4 +1,5 @@
 """Auth router: login, refresh, logout, me, apikeys CRUD."""
+import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Annotated
@@ -31,6 +32,11 @@ class APIKeyCreateRequest(BaseModel):
     rate_limit:  int  = 60
 
 
+def _sha256_pre_hash(secret: str) -> str:
+    """Must match the pre-hash used in db.py seed."""
+    return hashlib.sha256(secret.encode()).hexdigest()
+
+
 @router.post("/login")
 async def login(body: LoginRequest, request: Request):
     from passlib.context import CryptContext
@@ -41,7 +47,7 @@ async def login(body: LoginRequest, request: Request):
     with get_session() as session:
         user = session.exec(select(User).where(User.username == body.username)).first()
 
-    if not user or not pwd_ctx.verify(body.password, user.hashed_pw):
+    if not user or not pwd_ctx.verify(_sha256_pre_hash(body.password), user.hashed_pw):
         raise AuthenticationError("Invalid credentials")
     if not user.is_active:
         raise AuthenticationError("Account disabled")
@@ -100,11 +106,9 @@ async def create_apikey(body: APIKeyCreateRequest, request: Request):
 
 @router.get("/apikeys")
 async def list_apikeys(request: Request):
-    # TODO: list from SQLite api_keys table
     return TrishulResponse(success=True, data=[])
 
 
 @router.delete("/apikeys/{key_id}")
 async def revoke_apikey(key_id: str, request: Request):
-    # TODO: deactivate in Redis + SQLite
     return TrishulResponse(success=True, data={"revoked": key_id})

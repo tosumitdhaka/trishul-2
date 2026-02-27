@@ -85,14 +85,17 @@ class PluginRegistry:
                 plugin: FCAPSPlugin = module.plugin
 
                 await plugin.on_startup(
+                    app=app,
                     nats=nats_client,
                     metrics_store=metrics_store,
                     event_store=event_store,
                 )
 
+                # Each plugin router already includes the plugin-name path segment
+                # (e.g. @router.get("/snmp/health")) so prefix is just /api/v1.
                 app.include_router(
                     plugin.get_router(),
-                    prefix=f"/api/v1/{plugin.name}",
+                    prefix="/api/v1",
                 )
 
                 self.plugins[plugin.name] = plugin
