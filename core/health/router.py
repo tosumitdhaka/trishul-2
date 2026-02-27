@@ -60,9 +60,13 @@ async def health(request: Request):
 
 
 async def _ping_nats(client) -> bool:
+    """client is TrishulNATSClient; check its internal _nc."""
     if client is None:
         return False
-    return client.nc.is_connected
+    nc = getattr(client, "_nc", None)
+    if nc is None:
+        return False
+    return nc.is_connected
 
 
 async def _ping_redis(redis) -> bool:

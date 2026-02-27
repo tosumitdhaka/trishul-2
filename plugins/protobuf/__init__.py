@@ -1,4 +1,3 @@
-# lazy import
-def get_plugin():
-    from plugins.protobuf.plugin import plugin
-    return plugin
+from plugins.protobuf.plugin import plugin
+
+__all__ = ["plugin"]
