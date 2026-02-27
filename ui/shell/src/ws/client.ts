@@ -21,14 +21,23 @@ function connect() {
   ws.onmessage = (ev) => {
     try {
       const envelope = JSON.parse(ev.data) as Record<string, unknown>;
+
+      // Ignore keepalive pings and any message without a valid FCAPS domain
+      const domain = envelope.domain as string | undefined;
+      if (!domain || !['FM', 'PM', 'LOG'].includes(domain)) return;
+
+      // Require at minimum a protocol field to avoid ghost entries
+      const protocol = envelope.protocol as string | undefined;
+      if (!protocol) return;
+
       const event: LiveEvent = {
         id:          crypto.randomUUID(),
         timestamp:   (envelope.timestamp as string) ?? new Date().toISOString(),
-        domain:      (envelope.domain   as string) ?? 'LOG',
-        protocol:    (envelope.protocol as string) ?? 'unknown',
-        source_ne:   (envelope.source_ne as string) ?? '—',
+        domain,
+        protocol,
+        source_ne:   (envelope.source_ne as string) ?? 'unknown',
         severity:    (envelope.severity as LiveEvent['severity']) ?? null,
-        message:     ((envelope.normalized as Record<string,unknown>)?.message as string)
+        message:     ((envelope.normalized as Record<string, unknown>)?.message as string)
                      ?? (envelope.message as string)
                      ?? '',
         envelope_id: (envelope.id as string) ?? '',
