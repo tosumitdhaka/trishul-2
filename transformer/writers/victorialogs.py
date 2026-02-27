@@ -10,7 +10,7 @@ class VictoriaLogsWriter(Writer):
 
     async def write(self, data: bytes | dict, sink_config: dict) -> None:
         import json
-        from core.models.envelope import MessageEnvelope
+        from core.models.envelope import MessageEnvelope, FCAPSDomain
 
         if isinstance(data, (bytes, bytearray)):
             envelope_dict = json.loads(data.decode("utf-8"))
@@ -18,9 +18,12 @@ class VictoriaLogsWriter(Writer):
             envelope_dict = data
 
         envelope = MessageEnvelope.model_validate(envelope_dict)
-        domain   = envelope.domain.value
 
-        if domain == "FM":
+        # domain may deserialise as str (enum value) or FCAPSDomain enum
+        domain = envelope.domain
+        domain_str = domain.value if isinstance(domain, FCAPSDomain) else str(domain)
+
+        if domain_str == "FM":
             await self._store.write_fm(envelope)
         else:
             await self._store.write_log(envelope)

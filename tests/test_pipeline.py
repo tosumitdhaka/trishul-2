@@ -1,5 +1,6 @@
 """Tests for TransformPipeline and PipelineRegistry assembly."""
 import pytest
+import types
 from unittest.mock import AsyncMock
 from datetime import datetime, timezone
 
@@ -11,14 +12,12 @@ from transformer.normalizer import FCAPSNormalizer
 from transformer.decoders.json import JSONDecoder
 from transformer.encoders.json import JSONEncoder
 from transformer.writers.nats import NATSWriter
-from core.models.envelope import FCAPSDomain, Direction
+from core.models.envelope import FCAPSDomain
 
 
 @pytest.fixture
 def mock_nats():
-    n = object.__new__(object.__class__)
-    import types
-    n = types.SimpleNamespace()
+    n    = types.SimpleNamespace()
     n.js = types.SimpleNamespace()
     n.js.publish = AsyncMock()
     return n
@@ -49,9 +48,9 @@ async def test_pipeline_run_end_to_end(mock_nats):
 @pytest.mark.asyncio
 async def test_pipeline_registry_get_pipeline(mock_nats):
     registry = PipelineRegistry()
-    registry.register_decoder("json",  JSONDecoder())
-    registry.register_encoder("json",  JSONEncoder())
-    registry.register_writer("nats",   NATSWriter(mock_nats))
+    registry.register_decoder("json", JSONDecoder())
+    registry.register_encoder("json", JSONEncoder())
+    registry.register_writer("nats",  NATSWriter(mock_nats))
 
     config = PipelineJobConfig(
         decoder    = StageConfig(type="json"),
