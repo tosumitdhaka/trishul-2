@@ -11,13 +11,13 @@ export default defineConfig({
       remotes: {},  // Phase 5 remotes loaded dynamically at runtime via RemotePage
       // Expose shared design system so MFE remotes can import it
       exposes: {
-        './design-system': './src/design-system/index.ts',
+        './design-system': './src/design-system/index.tsx',
       },
       shared: {
-        react:     { singleton: true, requiredVersion: '^18.0.0' },
+        react:      { singleton: true, requiredVersion: '^18.0.0' },
         'react-dom': { singleton: true, requiredVersion: '^18.0.0' },
-        zustand:   { singleton: true },
-        axios:     { singleton: true },
+        zustand:    { singleton: true },
+        axios:      { singleton: true },
       },
     }),
   ],
@@ -25,10 +25,10 @@ export default defineConfig({
     alias: { '@': path.resolve(__dirname, './src') },
   },
   build: {
-    target:         'esnext',
-    modulePreload:  false,
-    minify:         false,
-    cssCodeSplit:   false,
+    target:        'esnext',
+    modulePreload: false,
+    minify:        false,
+    cssCodeSplit:  false,
   },
   server: {
     port: 5173,
