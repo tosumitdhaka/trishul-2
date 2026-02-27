@@ -1,4 +1,4 @@
-"""WebhookPlugin — FCAPSPlugin implementation (promoted from Phase 1 scaffold)."""
+"""WebhookPlugin — FCAPSPlugin implementation."""
 from fastapi import APIRouter
 from core.plugin_registry import FCAPSPlugin
 from plugins.webhook.router import router
@@ -23,9 +23,7 @@ class WebhookPlugin(FCAPSPlugin):
                 "domains": self.domains, "protocols": self.protocols}
 
     async def on_startup(self, **kwargs) -> None:
-        app = kwargs.get("app")
-        if app:
-            app.include_router(router, prefix="/api/v1")
+        # Router registration is handled by PluginRegistry.load_all
         pipeline_registry.register_decoder("json", JSONDecoder())
 
     async def on_shutdown(self) -> None:

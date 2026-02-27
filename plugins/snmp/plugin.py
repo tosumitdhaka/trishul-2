@@ -25,9 +25,8 @@ class SNMPPlugin(FCAPSPlugin):
                 "domains": self.domains, "protocols": self.protocols}
 
     async def on_startup(self, **kwargs) -> None:
-        app = kwargs.get("app")
-        if app:
-            app.include_router(router, prefix="/api/v1")
+        # Router registration is handled by PluginRegistry.load_all—do NOT call
+        # app.include_router here to avoid duplicate / wrong-prefix registration.
         pipeline_registry.register_decoder("snmp", SNMPDecoder())
         from transformer.writers.webhook import WebhookWriter
         pipeline_registry.register_writer("webhook", WebhookWriter())

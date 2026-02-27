@@ -25,9 +25,7 @@ class ProtobufPlugin(FCAPSPlugin):
                 "domains": self.domains, "protocols": self.protocols}
 
     async def on_startup(self, **kwargs) -> None:
-        app = kwargs.get("app")
-        if app:
-            app.include_router(router, prefix="/api/v1")
+        # Router registration is handled by PluginRegistry.load_all
         pipeline_registry.register_decoder("protobuf", ProtobufDecoder())
 
     async def on_shutdown(self) -> None:

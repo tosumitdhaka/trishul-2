@@ -13,12 +13,15 @@ WORKDIR /app
 COPY --from=builder /install /usr/local
 
 # Copy application source
-COPY core/       ./core/
+COPY core/        ./core/
 COPY transformer/ ./transformer/
-COPY plugins/    ./plugins/
+COPY plugins/     ./plugins/
 
-# Non-root user
-RUN adduser --disabled-password --gecos "" trishul
+# Non-root user — must create /data and chown BEFORE switching user
+RUN adduser --disabled-password --gecos "" trishul \
+ && mkdir -p /data \
+ && chown trishul:trishul /data
+
 USER trishul
 
 # Persistent data directory (SQLite volume mount point)

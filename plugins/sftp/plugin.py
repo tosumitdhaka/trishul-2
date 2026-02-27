@@ -26,9 +26,7 @@ class SFTPPlugin(FCAPSPlugin):
                 "domains": self.domains, "protocols": self.protocols}
 
     async def on_startup(self, **kwargs) -> None:
-        app = kwargs.get("app")
-        if app:
-            app.include_router(router, prefix="/api/v1")
+        # Router registration is handled by PluginRegistry.load_all
         pipeline_registry.register_reader("sftp", SFTPReader())
         pipeline_registry.register_writer("sftp", SFTPWriter())
 
