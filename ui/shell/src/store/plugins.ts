@@ -2,30 +2,30 @@ import { create } from 'zustand';
 import axios from 'axios';
 
 export interface Plugin {
-  name:            string;
-  version:         string;
-  domains:         string[];
-  protocols?:      string[];
-  remote_url?:     string;
-  exposed?:        string;
-  federation_name?: string;   // window key Vite registers the MFE container under
-  health?:         string;
-  [key: string]:   unknown;
+  name:             string;
+  version:          string;
+  domains:          string[];
+  protocols?:       string[];
+  remote_url?:      string;
+  exposed?:         string;
+  federation_name?: string;  // exact window[key] Vite registers the MFE container under
+  health?:          string;
+  [key: string]:    unknown;
 }
 
 interface PluginsState {
-  plugins:     Plugin[];
-  loading:     boolean;
-  error:       string | null;
-  fetchPlugins: () => Promise<void>;
+  plugins:  Plugin[];
+  loading:  boolean;
+  error:    string | null;
+  fetch:    () => Promise<void>;   // keep original name — ShellLayout + PluginsPage use s.fetch
 }
 
 export const usePluginsStore = create<PluginsState>((set) => ({
-  plugins:  [],
-  loading:  false,
-  error:    null,
+  plugins: [],
+  loading: false,
+  error:   null,
 
-  fetchPlugins: async () => {
+  fetch: async () => {
     set({ loading: true, error: null });
     try {
       const res = await axios.get<{ plugins: Plugin[] }>('/api/v1/plugins/registry');
