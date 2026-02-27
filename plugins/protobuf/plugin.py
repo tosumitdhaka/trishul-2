@@ -1,4 +1,5 @@
 """ProtobufPlugin — FCAPSPlugin implementation."""
+from fastapi import APIRouter
 from core.plugin_registry import FCAPSPlugin
 from plugins.protobuf.router import router
 from transformer.pipeline import pipeline_registry
@@ -6,12 +7,27 @@ from transformer.decoders.protobuf import ProtobufDecoder
 
 
 class ProtobufPlugin(FCAPSPlugin):
-    name    = "protobuf"
-    version = "1.0.0"
-    domains = ["PM"]
+    name      = "protobuf"
+    version   = "1.0.0"
+    domains   = ["PM"]
+    protocols = ["protobuf"]
 
-    async def on_startup(self, app, nats, metrics_store, event_store) -> None:
-        app.include_router(router, prefix="/api/v1")
+    def get_router(self) -> APIRouter:
+        return router
+
+    def get_nats_subjects(self) -> list[str]:
+        from plugins.protobuf.config import get_protobuf_settings
+        cfg = get_protobuf_settings()
+        return [cfg.PROTO_NATS_SUBJECT, cfg.PROTO_SIM_SUBJECT]
+
+    def get_metadata(self) -> dict:
+        return {"name": self.name, "version": self.version,
+                "domains": self.domains, "protocols": self.protocols}
+
+    async def on_startup(self, **kwargs) -> None:
+        app = kwargs.get("app")
+        if app:
+            app.include_router(router, prefix="/api/v1")
         pipeline_registry.register_decoder("protobuf", ProtobufDecoder())
 
     async def on_shutdown(self) -> None:

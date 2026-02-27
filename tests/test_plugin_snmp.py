@@ -1,10 +1,11 @@
-"""Tests for SNMP plugin — simulator and decoder integration."""
+"""Tests for SNMP plugin — simulator and pipeline integration.
+   Imports simulator + pipeline directly, NOT plugin.py.
+"""
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 from plugins.snmp.simulator import snmp_simulator
 from plugins.snmp.pipeline import build_snmp_pipeline
-from transformer.decoders.snmp import SNMPDecoder
-from core.models.envelope import FCAPSDomain, Direction
+from core.models.envelope import FCAPSDomain
 import types
 from datetime import datetime, timezone
 
@@ -42,7 +43,7 @@ async def test_snmp_pipeline_run(mock_nats):
         "timestamp": datetime.now(timezone.utc),
     }
     envelope = await pipeline.run(trap, meta, {"subject": "fcaps.ingest.snmp"})
-    assert envelope.domain  == FCAPSDomain.FM
+    assert envelope.domain    == FCAPSDomain.FM
     assert envelope.source_ne == "router-01"
     mock_nats.js.publish.assert_called_once()
 
@@ -51,10 +52,9 @@ async def test_snmp_pipeline_run(mock_nats):
 async def test_snmp_simulate_endpoint():
     from fastapi.testclient import TestClient
     from fastapi import FastAPI
-    import types
 
-    app   = FastAPI()
-    nats  = types.SimpleNamespace()
+    app = FastAPI()
+    nats = types.SimpleNamespace()
     nats.js = types.SimpleNamespace()
     nats.js.publish = AsyncMock()
     app.state.nats  = nats

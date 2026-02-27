@@ -1,4 +1,5 @@
 """SFTPPlugin — FCAPSPlugin implementation."""
+from fastapi import APIRouter
 from core.plugin_registry import FCAPSPlugin
 from plugins.sftp.router import router
 from transformer.pipeline import pipeline_registry
@@ -7,12 +8,27 @@ from transformer.writers.sftp import SFTPWriter
 
 
 class SFTPPlugin(FCAPSPlugin):
-    name    = "sftp"
-    version = "1.0.0"
-    domains = ["PM", "LOG"]
+    name      = "sftp"
+    version   = "1.0.0"
+    domains   = ["PM", "LOG"]
+    protocols = ["sftp"]
 
-    async def on_startup(self, app, nats, metrics_store, event_store) -> None:
-        app.include_router(router, prefix="/api/v1")
+    def get_router(self) -> APIRouter:
+        return router
+
+    def get_nats_subjects(self) -> list[str]:
+        from plugins.sftp.config import get_sftp_settings
+        cfg = get_sftp_settings()
+        return [cfg.SFTP_NATS_SUBJECT, cfg.SFTP_SIM_SUBJECT]
+
+    def get_metadata(self) -> dict:
+        return {"name": self.name, "version": self.version,
+                "domains": self.domains, "protocols": self.protocols}
+
+    async def on_startup(self, **kwargs) -> None:
+        app = kwargs.get("app")
+        if app:
+            app.include_router(router, prefix="/api/v1")
         pipeline_registry.register_reader("sftp", SFTPReader())
         pipeline_registry.register_writer("sftp", SFTPWriter())
 

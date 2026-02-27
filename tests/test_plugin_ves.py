@@ -1,10 +1,10 @@
-"""Tests for VES plugin — simulator and decoder integration."""
+"""Tests for VES plugin — simulator and pipeline integration.
+   Imports simulator + pipeline directly, NOT plugin.py.
+"""
 import pytest
-import json
 from unittest.mock import AsyncMock
 from plugins.ves.simulator import ves_simulator
 from plugins.ves.pipeline import build_ves_pipeline
-from transformer.decoders.ves import VESDecoder
 from core.models.envelope import FCAPSDomain
 import types
 from datetime import datetime, timezone
@@ -58,10 +58,9 @@ async def test_ves_pipeline_run(mock_nats):
 async def test_ves_simulate_endpoint():
     from fastapi.testclient import TestClient
     from fastapi import FastAPI
-    import types
 
-    app   = FastAPI()
-    nats  = types.SimpleNamespace()
+    app = FastAPI()
+    nats = types.SimpleNamespace()
     nats.js = types.SimpleNamespace()
     nats.js.publish = AsyncMock()
     app.state.nats  = nats

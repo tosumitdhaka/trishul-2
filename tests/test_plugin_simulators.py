@@ -1,4 +1,6 @@
-"""Unit tests for shared SimulatorBase + all plugin simulators."""
+"""Unit tests for shared SimulatorBase + all plugin simulators.
+   Imports simulators directly — does NOT import plugin.py to avoid ABC instantiation.
+"""
 import pytest
 from plugins.shared.simulator_base import SimulatorBase
 from plugins.snmp.simulator import snmp_simulator

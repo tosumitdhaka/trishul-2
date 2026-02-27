@@ -1,37 +1,38 @@
-"""WebhookPlugin — FCAPSPlugin implementation for the Webhook reference plugin."""
+"""WebhookPlugin — FCAPSPlugin implementation (promoted from Phase 1 scaffold)."""
+from fastapi import APIRouter
 from core.plugin_registry import FCAPSPlugin
 from plugins.webhook.router import router
+from transformer.pipeline import pipeline_registry
+from transformer.decoders.json import JSONDecoder
 
 
 class WebhookPlugin(FCAPSPlugin):
-    name     = "webhook"
-    version  = "1.0.0"
-    domains  = ["FM", "PM", "LOG"]
+    name      = "webhook"
+    version   = "1.0.0"
+    domains   = ["FM", "LOG"]
     protocols = ["webhook"]
 
-    def get_router(self):
+    def get_router(self) -> APIRouter:
         return router
 
     def get_nats_subjects(self) -> list[str]:
-        return ["fcaps.ingest.webhook", "fcaps.sim.webhook"]
+        return ["fcaps.ingest.webhook", "fcaps.simulated.webhook"]
+
+    def get_metadata(self) -> dict:
+        return {"name": self.name, "version": self.version,
+                "domains": self.domains, "protocols": self.protocols}
 
     async def on_startup(self, **kwargs) -> None:
-        from transformer.pipeline import pipeline_registry
-        # Register JSONDecoder for 'webhook' protocol (Phase 2 will add real impl)
-        # For Phase 1, we use the normalizer directly in the router
-        import structlog
-        structlog.get_logger(__name__).info("plugin_loaded", plugin=self.name, version=self.version)
+        app = kwargs.get("app")
+        if app:
+            app.include_router(router, prefix="/api/v1")
+        pipeline_registry.register_decoder("json", JSONDecoder())
 
     async def on_shutdown(self) -> None:
         pass
 
-    def get_metadata(self) -> dict:
-        return {
-            "name":      self.name,
-            "version":   self.version,
-            "domains":   self.domains,
-            "protocols": self.protocols,
-        }
+    def health(self) -> dict:
+        return {"plugin": self.name, "status": "healthy"}
 
 
 plugin = WebhookPlugin()
