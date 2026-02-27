@@ -16,6 +16,7 @@ from core.plugin_registry import PluginRegistry
 from core.auth.router import router as auth_router
 from core.health.router import router as health_router
 from core.notifications.service import NotificationService
+from core.ws.router import router as ws_router          # Phase 4 — WebSocket
 
 # Transformer
 from transformer.router import router as transform_router
@@ -108,7 +109,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.plugin_registry = registry
     log.info("plugins_loaded", count=len(registry.plugins))
 
-    # 7. Start NATS consumers (storage-writer + ws-broadcaster)
+    # 7. Start NATS notification service
+    #    _handle() writes to storage AND broadcasts to WebSocket clients
     notification_service = NotificationService(nats, metrics_store, event_store)
     await notification_service.start()
     app.state.notification_service = notification_service
@@ -155,6 +157,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router,      prefix="/api/v1")
     app.include_router(health_router)
     app.include_router(transform_router, prefix="/api/v1")
+    app.include_router(ws_router)        # WebSocket at /ws/events (no prefix — path is absolute)
 
     return app
 

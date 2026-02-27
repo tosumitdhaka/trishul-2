@@ -8,8 +8,9 @@ log = structlog.get_logger(__name__)
 
 
 class NotificationService:
-    """Subscribes to fcaps.done.> and dispatches to storage writers.
-    WebSocket broadcast is added in Phase 4.
+    """Subscribes to fcaps.done.> and dispatches to:
+    1. Storage writers (InfluxDB / VictoriaLogs)
+    2. WebSocket broadcaster → connected browsers (Phase 4+)
     """
 
     def __init__(self, nats_client, metrics_store, event_store) -> None:
@@ -36,6 +37,7 @@ class NotificationService:
             data     = json.loads(msg.data.decode())
             envelope = MessageEnvelope.model_validate(data)
 
+            # 1. Storage writes
             if envelope.domain == FCAPSDomain.PM:
                 await self._metrics_store.write_pm(envelope)
             elif envelope.domain == FCAPSDomain.FM:
@@ -44,5 +46,14 @@ class NotificationService:
                 await self._event_store.write_log(envelope)
 
             log.info("envelope_stored", envelope_id=envelope.id, domain=envelope.domain.value)
+
+            # 2. WebSocket broadcast → all connected browser clients
+            try:
+                from core.ws.router import broadcast_envelope
+                await broadcast_envelope(data)
+            except Exception as ws_exc:
+                # Never let WS errors kill the storage write path
+                log.warning("ws_broadcast_failed", error=str(ws_exc))
+
         except Exception as exc:
             log.error("storage_write_failed", error=str(exc), exc_info=True)
