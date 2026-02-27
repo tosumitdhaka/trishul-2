@@ -1,34 +1,29 @@
-"""Synthetic webhook event generator for /simulate endpoint."""
-
+"""Generates synthetic webhook events for simulation."""
 import random
 import uuid
 from datetime import datetime, timezone
 
-from plugins.webhook.models import SimulateRequest
+from plugins.webhook.models import WebhookPayload
 
-_SEVERITIES = ["CRITICAL", "MAJOR", "MINOR", "WARNING", "CLEARED"]
-_MESSAGES   = [
-    "Link down on interface GE0/0",
-    "CPU utilization exceeded 90%",
-    "Memory threshold breach",
-    "BGP session dropped",
-    "Interface flapping detected",
-]
+FAULT_TYPES  = ["linkDown", "linkUp", "nodeUnreachable", "highCpuUsage", "memoryThreshold"]
+SEVERITIES   = ["CRITICAL", "MAJOR", "MINOR", "WARNING", "CLEARED"]
 
 
-def generate_events(req: SimulateRequest) -> list[dict]:
-    """Generate `count` synthetic webhook payloads."""
+def generate_events(count: int, domain: str, severity: str, source_ne: str) -> list[WebhookPayload]:
     events = []
-    for _ in range(req.count):
-        events.append({
-            "source_ne":  req.source_ne,
-            "domain":     req.domain,
-            "severity":   req.severity if req.domain == "FM" else None,
-            "message":    random.choice(_MESSAGES),
-            "data": {
-                "event_id":   str(uuid.uuid4()),
-                "timestamp":  datetime.now(timezone.utc).isoformat(),
-                "metric_val": round(random.uniform(0, 100), 2),
+    for i in range(count):
+        fault = random.choice(FAULT_TYPES)
+        sev   = severity if severity != "RANDOM" else random.choice(SEVERITIES)
+        events.append(WebhookPayload(
+            source_ne = source_ne,
+            domain    = domain,
+            protocol  = "webhook",
+            severity  = sev,
+            message   = f"{fault} detected on {source_ne} (event {i+1}/{count})",
+            data      = {
+                "fault_type":  fault,
+                "event_id":    str(uuid.uuid4()),
+                "generated_at": datetime.now(timezone.utc).isoformat(),
             },
-        })
+        ))
     return events

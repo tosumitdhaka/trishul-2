@@ -1,32 +1,18 @@
-from __future__ import annotations
-
+"""publish_envelope() — the single helper all plugins use to publish to NATS."""
 import json
-import logging
-
-from nats.aio.client import Client as NATSClient
-
+from core.bus.client import TrishulNATSClient
 from core.models.envelope import MessageEnvelope
-
-log = logging.getLogger(__name__)
+from core.exceptions import BusPublishError
 
 
 async def publish_envelope(
-    nc: NATSClient,
+    nats_client: TrishulNATSClient,
     envelope: MessageEnvelope,
-    subject_prefix: str = "fcaps.ingest",
+    subject: str,
 ) -> None:
-    """
-    Serialise and publish a MessageEnvelope to JetStream.
-
-    Subject: {subject_prefix}.{protocol}
-    e.g.  fcaps.ingest.webhook
-          fcaps.sim.snmp
-    """
-    subject = f"{subject_prefix}.{envelope.protocol}"
-    payload = envelope.model_dump_json().encode()
-    js = nc.jetstream()
-    ack = await js.publish(subject, payload)
-    log.info(
-        "event=envelope_ingested envelope_id=%s subject=%s seq=%s",
-        envelope.id, subject, ack.seq,
-    )
+    """Publish a MessageEnvelope to the given NATS subject as JSON."""
+    try:
+        payload = envelope.model_dump_json().encode()
+        await nats_client.js.publish(subject, payload)
+    except Exception as exc:
+        raise BusPublishError(f"Failed to publish to {subject}: {exc}") from exc

@@ -1,130 +1,107 @@
-"""Webhook plugin router — /api/v1/webhook/*
-
-Endpoints:
-  POST /receive   — accept JSON payload → validate → publish to NATS → 202
-  POST /send      — POST to external target URL
-  POST /simulate  — generate N synthetic events, publish each to NATS
-  GET  /status/{envelope_id}  — check envelope processing status from Redis
-  GET  /health    — plugin-level health (always 200 if process is up)
-"""
-
-import json
-import uuid
-
+"""Webhook plugin HTTP router — 5 standard endpoints."""
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+import structlog
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
-from core.bus.publisher import publish_envelope, publish_sim
-from core.dependencies import CurrentUser
-from core.models.envelope import Direction, FCAPSDomain, MessageEnvelope, Severity
-from core.models.responses import AcceptedResponse, TrishulResponse
-from plugins.webhook.models import SimulateRequest, WebhookPayload
+from core.bus.publisher import publish_envelope
+from core.models.envelope import MessageEnvelope, FCAPSDomain, Direction, Severity
+from core.models.responses import TrishulResponse, AcceptedResponse
+from plugins.webhook.models import WebhookPayload, SimulateRequest, SendRequest
 from plugins.webhook.simulator import generate_events
-from transformer.normalizer import FCAPSNormalizer
+from transformer.normalizer import fcaps_normalizer
+
+import uuid
+from datetime import datetime, timezone
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["webhook"])
-_normalizer = FCAPSNormalizer()
 
-
-# ─── Receive ─────────────────────────────────────────────────────────────────────
 
 @router.post("/receive", response_model=AcceptedResponse, status_code=202)
-async def receive(
-    payload: WebhookPayload,
-    request: Request,
-    user:    CurrentUser,
-):
-    trace_id = getattr(request.state, "trace_id", None)
-    redis    = request.app.state.redis
+async def receive(payload: WebhookPayload, request: Request):
+    """Accept inbound webhook event, publish to NATS, return 202."""
+    trace_id    = getattr(request.state, "trace_id", None)
+    envelope_id = str(uuid.uuid4())
 
     # Dedup check
-    env_id = str(uuid.uuid4())
-    dedup_key = f"dedup:{env_id}"
-    if await redis.exists(dedup_key):
-        return AcceptedResponse(envelope_id=env_id, message="Duplicate — already queued")
+    redis = request.app.state.redis
+    if redis:
+        dedup_key = f"dedup:{envelope_id}"
+        if await redis.exists(dedup_key):
+            return AcceptedResponse(envelope_id=envelope_id, status="duplicate")
+        await redis.setex(dedup_key, 900, "processing")  # 15 min
 
-    # Normalize to MessageEnvelope
-    envelope = await _normalizer.normalize(
-        decoded=payload.model_dump(),
-        meta={
-            "domain":      FCAPSDomain(payload.domain),
-            "protocol":    "webhook",
-            "source_ne":   payload.source_ne,
-            "direction":   Direction.INBOUND,
-            "raw_payload": payload.model_dump(),
-            "trace_id":    trace_id,
-            "severity":    payload.severity,
-        },
-    )
-    envelope.id = env_id
+    # Normalise via FCAPSNormalizer
+    decoded = payload.model_dump()
+    meta = {
+        "envelope_id": envelope_id,
+        "domain":      payload.domain,
+        "protocol":    "webhook",
+        "source_ne":   payload.source_ne,
+        "direction":   "inbound",
+        "severity":    payload.severity,
+        "trace_id":    trace_id,
+        "raw_payload": decoded,
+        "timestamp":   datetime.now(timezone.utc),
+    }
+    envelope = await fcaps_normalizer.normalize(decoded, meta)
 
     # Publish to NATS
-    await publish_envelope(envelope)
+    nats = request.app.state.nats
+    await publish_envelope(nats, envelope, f"fcaps.ingest.webhook")
 
-    # Cache dedup entry (15 min)
-    await redis.setex(dedup_key, 900, json.dumps({"status": "queued", "domain": envelope.domain}))
-
-    return AcceptedResponse(envelope_id=env_id)
-
-
-# ─── Send ───────────────────────────────────────────────────────────────────────────
-
-class _SendIn(BaseModel):
-    target_url: str
-    payload:    dict
+    log.info("envelope_ingested", envelope_id=envelope_id, domain=payload.domain, trace_id=trace_id)
+    return AcceptedResponse(envelope_id=envelope_id)
 
 
-@router.post("/send", response_model=TrishulResponse)
-async def send(body: _SendIn, user: CurrentUser):
+@router.post("/send")
+async def send(body: SendRequest, request: Request):
+    """POST a webhook payload to a target URL."""
     async with httpx.AsyncClient(timeout=10.0) as client:
-        try:
-            resp = await client.post(body.target_url, json=body.payload)
-            return TrishulResponse.ok(data={"status_code": resp.status_code, "sent": True})
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"Send failed: {exc}") from exc
+        resp = await client.post(body.target_url, json=body.payload)
+    return TrishulResponse(success=True, data={"status_code": resp.status_code})
 
 
-# ─── Simulate ───────────────────────────────────────────────────────────────────────
-
-@router.post("/simulate", response_model=TrishulResponse)
-async def simulate(req: SimulateRequest, request: Request, user: CurrentUser):
-    trace_id     = getattr(request.state, "trace_id", None)
-    events       = generate_events(req)
+@router.post("/simulate")
+async def simulate(body: SimulateRequest, request: Request):
+    """Generate synthetic events and publish them through the same ingest pipeline."""
+    events       = generate_events(body.count, body.domain, body.severity, body.source_ne)
     envelope_ids = []
 
     for event in events:
-        envelope = await _normalizer.normalize(
-            decoded=event,
-            meta={
-                "domain":    FCAPSDomain(req.domain),
-                "protocol":  "webhook",
-                "source_ne": req.source_ne,
-                "direction": Direction.SIMULATED,
-                "trace_id":  trace_id,
-                "severity":  event.get("severity"),
-            },
-        )
-        await publish_sim(envelope)
-        envelope_ids.append(envelope.id)
+        envelope_id = str(uuid.uuid4())
+        decoded = event.model_dump()
+        meta = {
+            "envelope_id": envelope_id,
+            "domain":      event.domain,
+            "protocol":    "webhook",
+            "source_ne":   event.source_ne,
+            "direction":   "simulated",
+            "severity":    event.severity,
+            "trace_id":    getattr(request.state, "trace_id", None),
+            "raw_payload": decoded,
+            "timestamp":   datetime.now(timezone.utc),
+        }
+        envelope = await fcaps_normalizer.normalize(decoded, meta)
+        nats = request.app.state.nats
+        await publish_envelope(nats, envelope, "fcaps.ingest.webhook")
+        envelope_ids.append(envelope_id)
 
-    return TrishulResponse.ok(data={"sent": len(events), "envelope_ids": envelope_ids})
+    return TrishulResponse(success=True, data={"sent": body.count, "envelope_ids": envelope_ids})
 
 
-# ─── Status ───────────────────────────────────────────────────────────────────────
-
-@router.get("/status/{envelope_id}", response_model=TrishulResponse)
-async def status(envelope_id: str, request: Request, user: CurrentUser):
+@router.get("/status/{envelope_id}")
+async def status(envelope_id: str, request: Request):
     redis = request.app.state.redis
-    raw   = await redis.get(f"dedup:{envelope_id}")
-    if not raw:
-        raise HTTPException(status_code=404, detail="Envelope not found or expired")
-    data = json.loads(raw)
-    return TrishulResponse.ok(data={"envelope_id": envelope_id, **data})
+    if redis:
+        val = await redis.get(f"dedup:{envelope_id}")
+        if val:
+            return TrishulResponse(success=True, data={"envelope_id": envelope_id, "status": val.decode()})
+    return TrishulResponse(success=True, data={"envelope_id": envelope_id, "status": "not_found"})
 
 
-# ─── Plugin Health ──────────────────────────────────────────────────────────────────
-
-@router.get("/health", response_model=TrishulResponse)
-async def plugin_health():
-    return TrishulResponse.ok(data={"plugin": "webhook", "status": "ok", "version": "1.0.0"})
+@router.get("/health")
+async def health():
+    return TrishulResponse(success=True, data={"plugin": "webhook", "status": "ok"})

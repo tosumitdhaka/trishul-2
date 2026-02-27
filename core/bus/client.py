@@ -1,48 +1,66 @@
+"""NATS singleton client with auto-reconnect."""
 from __future__ import annotations
-
-import logging
 
 import nats
 from nats.aio.client import Client as NATSClient
 
-log = logging.getLogger(__name__)
-
 _client: NATSClient | None = None
 
 
-async def connect(url: str) -> NATSClient:
-    global _client
+class TrishulNATSClient:
+    """Thin wrapper around nats.py client — singleton pattern."""
 
-    async def _disconnected_cb():
-        log.warning("event=nats_disconnected")
+    def __init__(self) -> None:
+        self._nc: NATSClient | None = None
 
-    async def _reconnected_cb():
-        log.info("event=nats_reconnected")
+    async def connect(self, url: str) -> None:
+        self._nc = await nats.connect(
+            url,
+            reconnect_time_wait=2,
+            max_reconnect_attempts=-1,     # reconnect forever
+            error_cb=self._on_error,
+            disconnected_cb=self._on_disconnect,
+            reconnected_cb=self._on_reconnect,
+        )
 
-    async def _error_cb(err):
-        log.error("event=nats_error error=%s", err)
+    @property
+    def js(self):
+        """JetStream context."""
+        if self._nc is None:
+            raise RuntimeError("NATS not connected")
+        return self._nc.jetstream()
 
-    _client = await nats.connect(
-        url,
-        disconnected_cb=_disconnected_cb,
-        reconnected_cb=_reconnected_cb,
-        error_cb=_error_cb,
-        max_reconnect_attempts=-1,   # reconnect indefinitely
-        reconnect_time_wait=2,
-    )
-    log.info("event=nats_connected url=%s", url)
-    return _client
+    @property
+    def nc(self) -> NATSClient:
+        if self._nc is None:
+            raise RuntimeError("NATS not connected")
+        return self._nc
+
+    async def drain(self) -> None:
+        if self._nc and not self._nc.is_closed:
+            await self._nc.drain()
+
+    @staticmethod
+    async def _on_error(exc: Exception) -> None:
+        import structlog
+        structlog.get_logger().error("nats_error", error=str(exc))
+
+    @staticmethod
+    async def _on_disconnect() -> None:
+        import structlog
+        structlog.get_logger().warning("nats_disconnected")
+
+    @staticmethod
+    async def _on_reconnect() -> None:
+        import structlog
+        structlog.get_logger().info("nats_reconnected")
 
 
-def get_nats_client() -> NATSClient:
-    if _client is None or not _client.is_connected:
-        raise RuntimeError("NATS client not initialised — call connect() first")
-    return _client
+_instance: TrishulNATSClient | None = None
 
 
-async def drain() -> None:
-    global _client
-    if _client and _client.is_connected:
-        await _client.drain()
-        log.info("event=nats_drained")
-    _client = None
+def get_nats_client() -> TrishulNATSClient:
+    global _instance
+    if _instance is None:
+        _instance = TrishulNATSClient()
+    return _instance

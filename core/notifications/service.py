@@ -1,56 +1,48 @@
-from __future__ import annotations
-
-import asyncio
+"""NotificationService — NATS fcaps.done.> consumer that fans out to storage + WebSocket."""
 import json
-import logging
-from typing import Set
+import structlog
 
-from fastapi import WebSocket
+from core.models.envelope import MessageEnvelope, FCAPSDomain
 
-log = logging.getLogger(__name__)
-
-_connections: Set[WebSocket] = set()
+log = structlog.get_logger(__name__)
 
 
-async def register(ws: WebSocket) -> None:
-    await ws.accept()
-    _connections.add(ws)
-    log.info("event=ws_client_connected total=%d", len(_connections))
-
-
-async def unregister(ws: WebSocket) -> None:
-    _connections.discard(ws)
-    log.info("event=ws_client_disconnected total=%d", len(_connections))
-
-
-async def broadcast(message: dict) -> None:
-    if not _connections:
-        return
-    payload = json.dumps(message)
-    dead: Set[WebSocket] = set()
-    for ws in list(_connections):
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.add(ws)
-    _connections -= dead
-
-
-async def start_broadcaster(nc) -> None:
+class NotificationService:
+    """Subscribes to fcaps.done.> and dispatches to storage writers.
+    WebSocket broadcast is added in Phase 4.
     """
-    Subscribe to fcaps.done.> and fan-out to all connected WebSocket clients.
-    Phase 4 will expose the actual WS endpoint — this wires the NATS side.
-    """
-    js = nc.jetstream()
 
-    async def _handler(msg):
+    def __init__(self, nats_client, metrics_store, event_store) -> None:
+        self._nats          = nats_client
+        self._metrics_store = metrics_store
+        self._event_store   = event_store
+        self._sub           = None
+
+    async def start(self) -> None:
+        self._sub = await self._nats.nc.subscribe(
+            "fcaps.done.>",
+            cb=self._handle,
+            queue="storage-writer",
+        )
+        log.info("notification_service_started")
+
+    async def stop(self) -> None:
+        if self._sub:
+            await self._sub.unsubscribe()
+        log.info("notification_service_stopped")
+
+    async def _handle(self, msg) -> None:
         try:
-            data = json.loads(msg.data.decode())
-            await broadcast(data)
-            await msg.ack()
+            data     = json.loads(msg.data.decode())
+            envelope = MessageEnvelope.model_validate(data)
+
+            if envelope.domain == FCAPSDomain.PM:
+                await self._metrics_store.write_pm(envelope)
+            elif envelope.domain == FCAPSDomain.FM:
+                await self._event_store.write_fm(envelope)
+            elif envelope.domain == FCAPSDomain.LOG:
+                await self._event_store.write_log(envelope)
+
+            log.info("envelope_stored", envelope_id=envelope.id, domain=envelope.domain.value)
         except Exception as exc:
-            log.error("event=broadcaster_error error=%s", exc)
-            await msg.nak()
-
-    await js.subscribe("fcaps.done.>", durable="ws-broadcaster", cb=_handler)
-    log.info("event=ws_broadcaster_started")
+            log.error("storage_write_failed", error=str(exc), exc_info=True)

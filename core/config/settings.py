@@ -1,48 +1,55 @@
+"""Central settings via pydantic-settings — single source of truth for all config."""
 from functools import lru_cache
+from typing import Literal
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False,
+        case_sensitive=True,
         extra="ignore",
     )
 
     # App
-    app_env: str = Field(default="lab", description="lab | prod")
-    app_version: str = Field(default="1.0.0")
-    log_level: str = Field(default="INFO")
-    storage_mode: str = Field(default="lab", description="lab | prod")
+    APP_ENV:      Literal["lab", "prod"] = "lab"
+    LOG_LEVEL:    str = "INFO"
+    STORAGE_MODE: Literal["lab", "prod"] = "lab"
 
-    # JWT
-    jwt_secret: str = Field(..., description="HS256 signing secret, min 32 chars")
-    jwt_access_ttl_minutes: int = Field(default=15)
-    jwt_refresh_ttl_days: int = Field(default=7)
-
-    # Rate limiting
-    rate_limit_default: int = Field(default=60, description="req/min for regular clients")
-    rate_limit_plugin: int = Field(default=600, description="req/min for plugin API keys")
+    # Auth
+    JWT_SECRET:             str
+    JWT_ACCESS_TTL_MINUTES: int  = 15
+    JWT_REFRESH_TTL_DAYS:   int  = 7
+    RATE_LIMIT_DEFAULT:     int  = 60
+    RATE_LIMIT_PLUGIN:      int  = 600
 
     # NATS
-    nats_url: str = Field(default="nats://nats:4222")
+    NATS_URL: str = "nats://nats:4222"
 
     # Redis
-    redis_url: str = Field(default="redis://redis:6379")
+    REDIS_URL: str = "redis://redis:6379"
 
     # InfluxDB
-    influx_url: str = Field(default="http://influxdb:8086")
-    influx_token: str = Field(...)
-    influx_org: str = Field(default="trishul")
-    influx_bucket: str = Field(default="fcaps_pm")
+    INFLUX_URL:    str
+    INFLUX_TOKEN:  str
+    INFLUX_ORG:    str = "trishul"
+    INFLUX_BUCKET: str = "fcaps_pm"
 
     # VictoriaLogs
-    victoria_url: str = Field(default="http://victorialogs:9428")
+    VICTORIA_URL: str = "http://victorialogs:9428"
 
     # SQLite
-    sqlite_path: str = Field(default="/data/fcaps.db")
+    SQLITE_PATH: str = "/data/fcaps.db"
+
+    @field_validator("JWT_SECRET")
+    @classmethod
+    def jwt_secret_min_length(cls, v: str) -> str:
+        if len(v) < 32:
+            raise ValueError("JWT_SECRET must be at least 32 characters")
+        return v
 
 
 @lru_cache(maxsize=1)

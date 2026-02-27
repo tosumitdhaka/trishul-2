@@ -1,30 +1,30 @@
-from __future__ import annotations
-
-from typing import Generic, TypeVar
-
-from .base import TrishulBaseModel
+"""Uniform API response shapes — every endpoint returns TrishulResponse or AcceptedResponse."""
+from typing import Generic, TypeVar, Optional
+from pydantic import BaseModel
 
 T = TypeVar("T")
 
 
-class TrishulResponse(TrishulBaseModel, Generic[T]):
-    """Uniform response wrapper for all synchronous endpoints."""
+class TrishulResponse(BaseModel, Generic[T]):
     success:  bool
-    data:     T | None   = None
-    error:    str | None = None
-    trace_id: str | None = None
-
-    @classmethod
-    def ok(cls, data: T, trace_id: str | None = None) -> "TrishulResponse[T]":
-        return cls(success=True, data=data, trace_id=trace_id)
-
-    @classmethod
-    def fail(cls, error: str, trace_id: str | None = None) -> "TrishulResponse[T]":
-        return cls(success=False, error=error, trace_id=trace_id)
+    data:     Optional[T]   = None
+    error:    Optional[str] = None
+    trace_id: Optional[str] = None
 
 
-class AcceptedResponse(TrishulBaseModel):
-    """202 Accepted — for all async (NATS-queued) ingest endpoints."""
+class AcceptedResponse(BaseModel):
     envelope_id: str
     status:      str = "accepted"
     message:     str = "Message queued for processing"
+
+
+def ok(data: T, trace_id: str | None = None) -> TrishulResponse[T]:
+    return TrishulResponse(success=True, data=data, trace_id=trace_id)
+
+
+def err(message: str, trace_id: str | None = None) -> TrishulResponse:
+    return TrishulResponse(success=False, error=message, trace_id=trace_id)
+
+
+def accepted(envelope_id: str) -> AcceptedResponse:
+    return AcceptedResponse(envelope_id=envelope_id)

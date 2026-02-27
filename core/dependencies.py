@@ -1,64 +1,43 @@
-"""FastAPI Depends() wrappers — all shared resources injected from here.
-
-Route handlers must NEVER import Redis/NATS/storage clients directly.
-Always use these dependency functions.
-"""
-
-from typing import Annotated
-
+"""FastAPI Depends() wrappers — all shared resources injected via these."""
 from fastapi import Depends, Request
-
 from core.config.settings import Settings, get_settings
 
-# ─── Settings ──────────────────────────────────────────────────────────────
 
-SettingsDep = Annotated[Settings, Depends(get_settings)]
-
-
-# ─── Auth (set by AuthMiddleware) ──────────────────────────────────────────
-
-def get_current_user(request: Request) -> dict:
-    """Returns the authenticated user dict attached by AuthMiddleware.
-
-    Keys: id, username, roles, auth_type (jwt | apikey)
-    """
-    return request.state.user
+def settings_dep() -> Settings:
+    return get_settings()
 
 
-CurrentUser = Annotated[dict, Depends(get_current_user)]
-
-
-# ─── NATS client ───────────────────────────────────────────────────────────
-
-def get_nats_client(request: Request):
-    """Returns the NATS client attached to app state at startup."""
-    return request.app.state.nats_client
-
-
-NatsClient = Annotated[object, Depends(get_nats_client)]
-
-
-# ─── Storage ───────────────────────────────────────────────────────────────
-
-def get_metrics_store(request: Request):
-    """Returns the MetricsStore instance (InfluxDB)."""
+def metrics_store_dep(request: Request):
     return request.app.state.metrics_store
 
 
-def get_event_store(request: Request):
-    """Returns the EventStore instance (VictoriaLogs)."""
+def event_store_dep(request: Request):
     return request.app.state.event_store
 
 
-MetricsStoreDep = Annotated[object, Depends(get_metrics_store)]
-EventStoreDep   = Annotated[object, Depends(get_event_store)]
+def nats_dep(request: Request):
+    return request.app.state.nats
 
 
-# ─── Redis ─────────────────────────────────────────────────────────────────
-
-def get_redis(request: Request):
-    """Returns the async Redis client attached to app state at startup."""
+def redis_dep(request: Request):
     return request.app.state.redis
 
 
-RedisDep = Annotated[object, Depends(get_redis)]
+def current_user(request: Request) -> dict:
+    """Returns user dict set by AuthMiddleware."""
+    user = getattr(request.state, "user", None)
+    if user is None:
+        from core.exceptions import AuthenticationError
+        raise AuthenticationError("Not authenticated")
+    return user
+
+
+def require_role(*roles: str):
+    """Dependency factory: raises 403 if user doesn't have any of the required roles."""
+    def checker(user: dict = Depends(current_user)) -> dict:
+        user_roles = set(user.get("roles", []))
+        if not user_roles.intersection(roles):
+            from core.exceptions import AuthorizationError
+            raise AuthorizationError(f"Requires one of: {list(roles)}")
+        return user
+    return checker

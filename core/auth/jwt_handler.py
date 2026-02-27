@@ -1,53 +1,55 @@
-from __future__ import annotations
-
+"""JWT encode / decode / refresh — HS256, blocklist via Redis."""
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Literal
 
 from jose import JWTError, jwt
 
 from core.config.settings import get_settings
 from core.exceptions import AuthenticationError
 
-_ALGORITHM = "HS256"
+ALGORITHM = "HS256"
 
 
-def _settings():
-    return get_settings()
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def encode_access_token(user_id: str, username: str, roles: list[str]) -> str:
-    s = _settings()
-    now = datetime.now(timezone.utc)
+def encode_jwt(
+    subject: str,
+    roles: list[str],
+    token_type: Literal["access", "refresh"],
+) -> str:
+    settings = get_settings()
+    if token_type == "access":
+        ttl = timedelta(minutes=settings.JWT_ACCESS_TTL_MINUTES)
+    else:
+        ttl = timedelta(days=settings.JWT_REFRESH_TTL_DAYS)
+
+    now = _now_utc()
     payload = {
-        "sub":  user_id,
-        "usr":  username,
+        "sub":   subject,
         "roles": roles,
-        "type": "access",
-        "jti":  str(uuid.uuid4()),
-        "iat":  now,
-        "exp":  now + timedelta(minutes=s.jwt_access_ttl_minutes),
+        "type":  token_type,
+        "jti":   str(uuid.uuid4()),
+        "iat":   now,
+        "exp":   now + ttl,
     }
-    return jwt.encode(payload, s.jwt_secret, algorithm=_ALGORITHM)
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=ALGORITHM)
 
 
-def encode_refresh_token(user_id: str) -> str:
-    s = _settings()
-    now = datetime.now(timezone.utc)
-    payload = {
-        "sub":  user_id,
-        "type": "refresh",
-        "jti":  str(uuid.uuid4()),
-        "iat":  now,
-        "exp":  now + timedelta(days=s.jwt_refresh_ttl_days),
-    }
-    return jwt.encode(payload, s.jwt_secret, algorithm=_ALGORITHM)
-
-
-def decode_token(token: str) -> dict[str, Any]:
-    s = _settings()
+def decode_jwt(token: str) -> dict:
+    settings = get_settings()
     try:
-        payload = jwt.decode(token, s.jwt_secret, algorithms=[_ALGORITHM])
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[ALGORITHM])
     except JWTError as exc:
-        raise AuthenticationError(f"Invalid or expired token: {exc}") from exc
+        raise AuthenticationError(str(exc)) from exc
     return payload
+
+
+def make_token_pair(subject: str, roles: list[str]) -> dict:
+    return {
+        "access_token":  encode_jwt(subject, roles, "access"),
+        "refresh_token": encode_jwt(subject, roles, "refresh"),
+        "token_type":    "bearer",
+    }

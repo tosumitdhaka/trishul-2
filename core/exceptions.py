@@ -1,37 +1,33 @@
-"""All custom exceptions for Trishul. Import from here — never define elsewhere."""
+"""All custom exceptions — map to HTTP status codes in ErrorHandlerMiddleware."""
 
 
-class TrishulBaseError(Exception):
-    """Base for all Trishul application errors."""
+class TrishulException(Exception):
+    """Base for all Trishul exceptions."""
 
 
-class AuthenticationError(TrishulBaseError):
-    """401 — token invalid/expired or credentials wrong."""
+class AuthenticationError(TrishulException):
+    """401 — Missing / invalid / expired credentials."""
 
 
-class AuthorizationError(TrishulBaseError):
-    """403 — authenticated but insufficient role."""
+class AuthorizationError(TrishulException):
+    """403 — Authenticated but lacks required role."""
 
 
-class RateLimitExceeded(TrishulBaseError):
-    """429 — too many requests."""
+class RateLimitExceeded(TrishulException):
+    """429 — Too many requests."""
 
 
-class PluginNotFoundError(TrishulBaseError):
-    """404 — plugin not registered."""
+class PluginNotFoundError(TrishulException):
+    """404 — Plugin not registered."""
 
 
-class BusPublishError(TrishulBaseError):
+class BusPublishError(TrishulException):
     """503 — NATS publish failed."""
 
 
-class StorageError(TrishulBaseError):
-    """503 — InfluxDB or VictoriaLogs write/read failed."""
+class StorageError(TrishulException):
+    """503 — Storage write/read failed."""
 
 
-class ValidationError(TrishulBaseError):
-    """422 — payload failed business-logic validation (distinct from Pydantic)."""
-
-
-class PipelineError(TrishulBaseError):
-    """500 — Transformer pipeline stage failed."""
+class ValidationError(TrishulException):
+    """422 — Business-level validation failure (distinct from Pydantic)."""

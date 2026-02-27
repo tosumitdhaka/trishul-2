@@ -1,44 +1,37 @@
-"""WebhookPlugin — concrete FCAPSPlugin implementation.
-
-Registers JSONDecoder with PipelineRegistry at startup.
-All inbound data is treated as JSON (most flexible for a webhook).
-"""
-
-from fastapi import APIRouter, FastAPI
-
+"""WebhookPlugin — FCAPSPlugin implementation for the Webhook reference plugin."""
 from core.plugin_registry import FCAPSPlugin
-from transformer.pipeline import pipeline_registry
+from plugins.webhook.router import router
 
 
 class WebhookPlugin(FCAPSPlugin):
-    name      = "webhook"
-    version   = "1.0.0"
-    domains   = ["FM", "PM", "LOG"]
+    name     = "webhook"
+    version  = "1.0.0"
+    domains  = ["FM", "PM", "LOG"]
     protocols = ["webhook"]
 
-    def get_router(self) -> APIRouter:
-        from plugins.webhook.router import router
+    def get_router(self):
         return router
 
     def get_nats_subjects(self) -> list[str]:
-        return ["fcaps.ingest.webhook"]
+        return ["fcaps.ingest.webhook", "fcaps.sim.webhook"]
 
-    async def on_startup(self, app: FastAPI) -> None:
-        # Register JSONDecoder for 'webhook' format
-        # JSONDecoder is a Phase 2 impl; here we inline a minimal one
-        from transformer.base import Decoder
-        from transformer.normalizer import FCAPSNormalizer
-
-        class _InlineJSONDecoder(Decoder):
-            format = "json"
-            async def decode(self, raw: bytes | dict) -> dict:
-                if isinstance(raw, bytes):
-                    import json
-                    return json.loads(raw)
-                return raw
-
-        pipeline_registry.register_decoder("webhook", _InlineJSONDecoder())
-        pipeline_registry.set_normalizer(FCAPSNormalizer())
+    async def on_startup(self, **kwargs) -> None:
+        from transformer.pipeline import pipeline_registry
+        # Register JSONDecoder for 'webhook' protocol (Phase 2 will add real impl)
+        # For Phase 1, we use the normalizer directly in the router
+        import structlog
+        structlog.get_logger(__name__).info("plugin_loaded", plugin=self.name, version=self.version)
 
     async def on_shutdown(self) -> None:
         pass
+
+    def get_metadata(self) -> dict:
+        return {
+            "name":      self.name,
+            "version":   self.version,
+            "domains":   self.domains,
+            "protocols": self.protocols,
+        }
+
+
+plugin = WebhookPlugin()

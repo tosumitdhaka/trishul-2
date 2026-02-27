@@ -1,50 +1,53 @@
 """Abstract base classes for all Transformer pipeline stages.
-Implementations live in transformer/decoders/, encoders/, readers/, writers/.
-All ABCs are defined here so plugins can import stage types without
-creating circular dependencies.
+
+Phase 1: ABCs only — no implementations here.
+Phase 2: Concrete Decoder/Encoder/Reader/Writer implementations.
 """
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
-from typing import Any
-
 from core.models.envelope import MessageEnvelope
 
 
 class Reader(ABC):
-    """Fetches raw data from a source."""
+    """Reads raw data from an external source."""
     protocol: str
 
     @abstractmethod
-    async def read(self, source_config: dict[str, Any]) -> bytes | dict: ...
+    async def read(self, source_config: dict) -> bytes | dict:
+        """Return raw bytes or dict from source."""
+        ...
 
 
 class Decoder(ABC):
-    """Converts raw bytes/dict into a plain decoded dict."""
+    """Decodes raw bytes/dict into a plain Python dict."""
     format: str
 
     @abstractmethod
-    async def decode(self, raw: bytes | dict) -> dict: ...
+    async def decode(self, raw: bytes | dict) -> dict:
+        ...
 
 
 class Normalizer(ABC):
-    """Maps a decoded dict + metadata into a MessageEnvelope."""
+    """Converts a decoded dict + metadata into a MessageEnvelope."""
 
     @abstractmethod
-    async def normalize(self, decoded: dict, meta: dict[str, Any]) -> MessageEnvelope: ...
+    async def normalize(self, decoded: dict, meta: dict) -> MessageEnvelope:
+        ...
 
 
 class Encoder(ABC):
-    """Serialises a MessageEnvelope into the output format."""
+    """Encodes a MessageEnvelope into bytes or dict for output."""
     format: str
 
     @abstractmethod
-    async def encode(self, envelope: MessageEnvelope) -> bytes | dict: ...
+    async def encode(self, envelope: MessageEnvelope) -> bytes | dict:
+        ...
 
 
 class Writer(ABC):
-    """Writes encoded data to a sink."""
+    """Writes encoded data to an output sink."""
     target: str
 
     @abstractmethod
-    async def write(self, data: bytes | dict, sink_config: dict[str, Any]) -> None: ...
+    async def write(self, data: bytes | dict, sink_config: dict) -> None:
+        ...

@@ -1,59 +1,51 @@
-from __future__ import annotations
+"""JetStream stream provisioner — idempotent, runs at startup."""
+from nats.js.errors import BadRequestError
 
-import logging
+from core.bus.client import TrishulNATSClient
 
-from nats.aio.client import Client as NATSClient
-from nats.js.api import RetentionPolicy, StorageType, StreamConfig
-
-log = logging.getLogger(__name__)
-
-# Stream definitions — frozen per architecture doc
-_STREAMS: list[dict] = [
+STREAM_CONFIGS = [
     {
         "name":     "FCAPS_INGEST",
         "subjects": ["fcaps.ingest.>"],
-        "storage":  StorageType.FILE,
-        "retention": RetentionPolicy.LIMITS,
-        "max_age":  3600,   # 1 hour in seconds
+        "storage":  "file",
+        "max_age":  3600,          # 1 hour in seconds
+        "retention": "limits",
     },
     {
         "name":     "FCAPS_PROCESS",
         "subjects": ["fcaps.process.>"],
-        "storage":  StorageType.MEMORY,
-        "retention": RetentionPolicy.WORK_QUEUE,
-        "max_age":  0,
+        "storage":  "memory",
+        "retention": "workqueue",
     },
     {
         "name":     "FCAPS_DONE",
         "subjects": ["fcaps.done.>"],
-        "storage":  StorageType.MEMORY,
-        "retention": RetentionPolicy.LIMITS,
-        "max_age":  1800,   # 30 minutes
+        "storage":  "memory",
+        "max_age":  1800,          # 30 minutes
+        "retention": "limits",
     },
     {
         "name":     "FCAPS_SIM",
         "subjects": ["fcaps.sim.>"],
-        "storage":  StorageType.MEMORY,
-        "retention": RetentionPolicy.LIMITS,
+        "storage":  "memory",
         "max_age":  3600,
+        "retention": "limits",
     },
 ]
 
 
-async def provision_streams(nc: NATSClient) -> None:
-    """Idempotent — creates streams if they don't exist."""
-    js = nc.jetstream()
-    for cfg in _STREAMS:
-        stream_cfg = StreamConfig(
-            name=cfg["name"],
-            subjects=cfg["subjects"],
-            storage=cfg["storage"],
-            retention=cfg["retention"],
-            max_age=cfg["max_age"],
-        )
+async def provision_streams(nats_client: TrishulNATSClient) -> None:
+    """Create all 4 streams if they don't exist. Safe to call on every startup."""
+    import structlog
+    log = structlog.get_logger(__name__)
+    js  = nats_client.js
+
+    for cfg in STREAM_CONFIGS:
         try:
-            await js.find_stream(cfg["subjects"][0])
-            log.info("event=stream_exists name=%s", cfg["name"])
-        except Exception:
-            await js.add_stream(stream_cfg)
-            log.info("event=stream_created name=%s", cfg["name"])
+            await js.add_stream(
+                name=cfg["name"],
+                subjects=cfg["subjects"],
+            )
+            log.info("stream_created", stream=cfg["name"])
+        except BadRequestError:
+            log.debug("stream_exists", stream=cfg["name"])

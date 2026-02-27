@@ -1,46 +1,46 @@
-from __future__ import annotations
-
+"""Redis token-bucket rate limiter middleware."""
 import json
-import logging
+import time
 from typing import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
-log = logging.getLogger(__name__)
+from core.config.settings import get_settings
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """
-    Simple fixed-window rate limiter using Redis INCR + EXPIRE.
-    Key: ratelimit:{client_id}  — resets every 60s.
-    """
+    def __init__(self, app: ASGIApp) -> None:
+        super().__init__(app)
+        self._settings = get_settings()
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        from core.config.settings import get_settings
-        settings = get_settings()
+        redis = getattr(request.app.state, "redis", None)
+        if redis is None:
+            return await call_next(request)
 
-        redis = request.app.state.redis
-        # Identify client: authenticated user id or IP
-        client_id = getattr(
-            getattr(request.state, "user", None), "get", lambda k, d=None: None
-        )("id") or (request.client.host if request.client else "anon")
+        client_id = self._get_client_id(request)
+        limit     = self._settings.RATE_LIMIT_DEFAULT
+        key       = f"ratelimit:{client_id}"
 
-        # Determine limit (plugin API keys may have higher limit)
-        user = getattr(request.state, "user", {})
-        auth_type = user.get("auth_type") if isinstance(user, dict) else None
-        limit = settings.rate_limit_plugin if auth_type == "api_key" else settings.rate_limit_default
-
-        key = f"ratelimit:{client_id}"
         count = await redis.incr(key)
         if count == 1:
             await redis.expire(key, 60)
 
         if count > limit:
-            log.warning(
-                json.dumps({"event": "rate_limit_exceeded", "client_id": client_id, "count": count})
-            )
-            body = json.dumps({"success": False, "error": f"Rate limit exceeded. Retry after 60s.", "data": None})
+            body = json.dumps({
+                "success": False, "data": None,
+                "error": f"Rate limit exceeded. Retry after {await redis.ttl(key)}s",
+                "trace_id": None,
+            })
             return Response(content=body, status_code=429, media_type="application/json")
 
         return await call_next(request)
+
+    @staticmethod
+    def _get_client_id(request: Request) -> str:
+        user = getattr(request.state, "user", None)
+        if user:
+            return user.get("id", request.client.host)
+        return request.client.host

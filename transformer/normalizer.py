@@ -1,50 +1,33 @@
-from __future__ import annotations
-
-from typing import Any
+"""FCAPSNormalizer — the single shared Normalizer implementation.
+All protocol decoders output a plain dict; this maps it to a MessageEnvelope.
+"""
+import uuid
+from datetime import datetime, timezone
 
 from transformer.base import Normalizer
-from core.models.envelope import Direction, FCAPSDomain, MessageEnvelope, Severity
+from core.models.envelope import MessageEnvelope, FCAPSDomain, Direction, Severity
 
 
 class FCAPSNormalizer(Normalizer):
-    """
-    Single shared Normalizer used by all protocol plugins.
-    meta dict expected keys:
-        domain       : str  (FM | PM | LOG)
-        protocol     : str
-        source_ne    : str  (optional — falls back to decoded['source_ne'])
-        direction    : str  (optional, default 'inbound')
-        severity     : str  (optional, FM only)
-        raw_payload  : dict (original bytes/dict before decoding)
-        trace_id     : str  (optional)
-        tags         : list (optional)
-    """
-
-    async def normalize(
-        self,
-        decoded: dict[str, Any],
-        meta:    dict[str, Any],
-    ) -> MessageEnvelope:
-        source_ne = (
-            meta.get("source_ne")
-            or decoded.get("source_ne")
-            or decoded.get("sourceId")
-            or "unknown"
-        )
-        severity_raw = meta.get("severity") or decoded.get("severity")
-        try:
-            severity = Severity(severity_raw.upper()) if severity_raw else None
-        except (ValueError, AttributeError):
-            severity = None
+    async def normalize(self, decoded: dict, meta: dict) -> MessageEnvelope:
+        domain_raw   = meta.get("domain", "LOG")
+        direction_raw = meta.get("direction", "inbound")
+        severity_raw  = decoded.get("severity") or meta.get("severity")
 
         return MessageEnvelope(
-            domain      = FCAPSDomain(meta["domain"]),
-            protocol    = meta["protocol"],
-            source_ne   = source_ne,
-            direction   = Direction(meta.get("direction", Direction.INBOUND)),
-            severity    = severity,
+            id          = meta.get("envelope_id", str(uuid.uuid4())),
+            timestamp   = meta.get("timestamp", datetime.now(timezone.utc)),
+            domain      = FCAPSDomain(domain_raw),
+            protocol    = meta.get("protocol", "unknown"),
+            source_ne   = meta.get("source_ne") or decoded.get("source_ne", "unknown"),
+            direction   = Direction(direction_raw),
+            severity    = Severity(severity_raw) if severity_raw else None,
             raw_payload = meta.get("raw_payload", {}),
             normalized  = decoded,
             trace_id    = meta.get("trace_id"),
             tags        = meta.get("tags", []),
         )
+
+
+# Shared singleton — imported by plugins
+fcaps_normalizer = FCAPSNormalizer()
