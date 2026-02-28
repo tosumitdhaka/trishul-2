@@ -6,6 +6,7 @@ import DashboardPage from '@/pages/DashboardPage';
 import PluginsPage from '@/pages/PluginsPage';
 import SettingsPage from '@/pages/SettingsPage';
 import ProfilePage from '@/pages/ProfilePage';
+import PlatformPage from '@/pages/PlatformPage';
 import RemotePage from '@/pages/RemotePage';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -25,12 +26,13 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<DashboardPage />} />
-        <Route path="plugins"  element={<PluginsPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="profile"  element={<ProfilePage />} />
-        {/* Phase 5: protocol plugin MFE pages loaded dynamically */}
-        <Route path=":pluginName" element={<RemotePage />} />
+        <Route index                  element={<DashboardPage />} />
+        <Route path="plugins"         element={<PluginsPage />} />
+        <Route path="settings"        element={<SettingsPage />} />
+        <Route path="profile"         element={<ProfilePage />} />
+        <Route path="platform"        element={<PlatformPage />} />
+        {/* Dynamic MFE pages */}
+        <Route path=":pluginName"     element={<RemotePage />} />
       </Route>
     </Routes>
   );

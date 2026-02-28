@@ -1,22 +1,55 @@
-import { useState, useMemo } from 'react';
-import { Search } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, RefreshCw } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { useWsEvents } from './useWsEvents';
+import type { WsEvent } from './useWsEvents';
 
 const DOMAIN_COLOR: Record<string,string> = {
   FM:  'text-red-400',
   PM:  'text-blue-400',
   LOG: 'text-white/40',
 };
-
 const PROTO_COLORS = ['#3b5bdb','#e03131','#f76707','#2f9e44','#f59f00','#74c0fc','#9775fa'];
 const protoColor = (p: string) => PROTO_COLORS[p.charCodeAt(0) % PROTO_COLORS.length];
 
+function vlogToEvent(e: Record<string,unknown>): WsEvent {
+  return {
+    id:          crypto.randomUUID(),
+    timestamp:   (e._time    as string) ?? new Date().toISOString(),
+    domain:      (e.domain   as string) ?? 'LOG',
+    protocol:    (e.protocol as string) ?? '',
+    source_ne:   (e.source_ne as string) ?? 'unknown',
+    severity:    (e.severity as string) ?? null,
+    message:     (e._msg     as string) ?? '',
+    envelope_id: (e.envelope_id as string) ?? '',
+  };
+}
+
 export default function LogViewerModule() {
-  const allEvents  = useWsEvents();
-  const [query, setQuery]   = useState('');
-  const [domain, setDomain] = useState('ALL');
-  const [proto, setProto]   = useState('ALL');
+  const wsEvents = useWsEvents();
+  const [historical,   setHistorical]   = useState<WsEvent[]>([]);
+  const [histLoading,  setHistLoading]  = useState(true);
+  const [query,  setQuery]   = useState('');
+  const [domain, setDomain]  = useState('ALL');
+  const [proto,  setProto]   = useState('ALL');
+  const [hStart, setHStart]  = useState('-1h');
+
+  const fetchHistory = (start: string, dom: string) => {
+    setHistLoading(true);
+    const params = new URLSearchParams({ start, limit: '500' });
+    if (dom && dom !== 'ALL') params.set('domain', dom);
+    fetch(`/api/v1/events?${params}`)
+      .then(r => r.json())
+      .then(d => setHistorical((d.data?.events || []).map(vlogToEvent)))
+      .catch(console.error)
+      .finally(() => setHistLoading(false));
+  };
+
+  useEffect(() => { fetchHistory(hStart, domain); }, []);
+
+  // Merge live WS + historical (deduped)
+  const wsIds     = new Set(wsEvents.map(e => e.envelope_id).filter(Boolean));
+  const allEvents = [...wsEvents, ...historical.filter(e => !wsIds.has(e.envelope_id))];
 
   const protocols = useMemo(() => ['ALL', ...Array.from(new Set(allEvents.map(e => e.protocol)))], [allEvents]);
 
@@ -39,7 +72,7 @@ export default function LogViewerModule() {
         <span className="text-white/30 text-xs">{filtered.length} / {allEvents.length} events</span>
       </div>
 
-      {/* Filters */}
+      {/* Filters row */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex-1 min-w-48 relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
@@ -48,7 +81,7 @@ export default function LogViewerModule() {
             className="w-full bg-white/5 border border-white/10 rounded-lg pl-8 pr-3 py-1.5
                        text-sm text-white placeholder-white/20 focus:outline-none focus:ring-1 focus:ring-blue-500" />
         </div>
-        <select value={domain} onChange={e => setDomain(e.target.value)}
+        <select value={domain} onChange={e => { setDomain(e.target.value); }}
           className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none">
           {['ALL','FM','PM','LOG'].map(d => <option key={d} value={d}>{d}</option>)}
         </select>
@@ -56,6 +89,14 @@ export default function LogViewerModule() {
           className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none">
           {protocols.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
+        <select value={hStart} onChange={e => setHStart(e.target.value)}
+          className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none">
+          {['-15m','-1h','-6h','-24h'].map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        <button onClick={() => fetchHistory(hStart, domain)} disabled={histLoading}
+          className="p-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg disabled:opacity-40 transition-colors">
+          <RefreshCw size={14} className={histLoading ? 'animate-spin' : ''} />
+        </button>
       </div>
 
       {/* Log stream */}
@@ -63,12 +104,14 @@ export default function LogViewerModule() {
         <div className="font-mono text-xs divide-y divide-white/5 max-h-[520px] overflow-y-auto">
           {filtered.length === 0 ? (
             <div className="px-4 py-8 text-center text-white/20">
-              {allEvents.length === 0 ? 'Waiting for events via WebSocket…' : 'No events match current filters.'}
+              {histLoading ? 'Loading historical logs…' :
+               allEvents.length === 0 ? 'No events yet. Simulate from any protocol page.' :
+               'No events match current filters.'}
             </div>
           ) : filtered.map(ev => (
             <div key={ev.id} className="flex items-start gap-3 px-4 py-2 hover:bg-white/5">
               <span className="text-white/25 flex-shrink-0 w-20">
-                {new Date(ev.timestamp).toLocaleTimeString()}
+                {formatDistanceToNow(new Date(ev.timestamp), { addSuffix: true })}
               </span>
               <span className={`flex-shrink-0 w-10 font-semibold ${DOMAIN_COLOR[ev.domain] ?? 'text-white/40'}`}>
                 {ev.domain}

@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import {
   LayoutDashboard, Puzzle, Settings, User,
   Radio, Wifi, Box, FileArchive, Webhook, FolderOpen,
-  BarChart2, ScrollText, MonitorDot,
+  BarChart2, ScrollText, MonitorDot, Server,
 } from 'lucide-react';
 
 const PROTOCOL_ICONS: Record<string, React.ElementType> = {
@@ -51,7 +51,7 @@ export default function Sidebar() {
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-900 border-r border-surface-200/10 flex flex-col py-4 px-3">
-      {/* Logo — use the SVG from public/ so it matches the browser tab favicon exactly */}
+      {/* Logo */}
       <div className="flex items-center gap-2.5 px-2 mb-6">
         <img src="/trishul-icon.svg" alt="Trishul" className="w-7 h-7 flex-shrink-0" />
         <span className="font-bold text-white tracking-tight">Trishul</span>
@@ -63,6 +63,7 @@ export default function Sidebar() {
         <NavItem to="/plugins" icon={Puzzle}          label="Plugins" />
       </div>
 
+      {/* Dashboard MFEs */}
       {dashboardPlugins.length > 0 && (
         <>
           <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wider text-surface-200/40">
@@ -81,6 +82,7 @@ export default function Sidebar() {
         </>
       )}
 
+      {/* Protocol MFEs */}
       {protocolPlugins.length > 0 && (
         <>
           <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wider text-surface-200/40">
@@ -95,7 +97,9 @@ export default function Sidebar() {
         </>
       )}
 
+      {/* Bottom — platform ops + user */}
       <div className="mt-auto space-y-1">
+        <NavItem to="/platform" icon={Server}   label="Platform" />
         <NavItem to="/settings" icon={Settings} label="Settings" />
         <NavItem to="/profile"  icon={User}     label="Profile" />
       </div>

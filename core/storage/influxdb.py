@@ -22,34 +22,41 @@ class InfluxDBMetrics(MetricsStore):
     async def write_pm(self, envelope: MessageEnvelope) -> None:
         norm        = envelope.normalized
         measurement = "pm_metrics"
-        # NOTE: envelope.protocol / source_ne are plain strings (use_enum_values=True)
         tags  = f"protocol={envelope.protocol},source_ne={envelope.source_ne}"
         value = float(norm.get("value", 0.0))
         ts_ns = int(envelope.timestamp.timestamp() * 1_000_000_000)
         line  = f"{measurement},{tags} value={value} {ts_ns}"
-
-        # WriteApiAsync is NOT an async context manager — call write() directly.
         write_api = self._client.write_api()
         await write_api.write(bucket=self._bucket, record=line)
 
     async def query_pm(
         self,
-        source_ne: str,
-        start: str = "-1h",
-        end: str   = "now()",
+        source_ne:   str | None = None,
+        start:       str = "-1h",
+        end:         str = "now()",
         metric_name: str | None = None,
-        limit: int = 500,
+        limit:       int = 500,
     ) -> list[dict]:
-        filter_ne    = f'|> filter(fn: (r) => r["source_ne"] == "{source_ne}")'
-        filter_extra = (
+        """Query PM metrics from InfluxDB.
+
+        Returns rows with time, value, protocol, and source_ne so the
+        frontend can feed them into timeline charts.
+        """
+        filter_ne = (
+            f'|> filter(fn: (r) => r["source_ne"] == "{source_ne}")'
+            if source_ne else ""
+        )
+        filter_metric = (
             f'|> filter(fn: (r) => r["metric_name"] == "{metric_name}")'
             if metric_name else ""
         )
         flux = (
             f'from(bucket: "{self._bucket}")'
             f'  |> range(start: {start}, stop: {end})'
+            f'  |> filter(fn: (r) => r["_measurement"] == "pm_metrics")'
             f'  {filter_ne}'
-            f'  {filter_extra}'
+            f'  {filter_metric}'
+            f'  |> sort(columns: ["_time"], desc: true)'
             f'  |> limit(n: {limit})'
         )
         query_api = self._client.query_api()
@@ -57,7 +64,12 @@ class InfluxDBMetrics(MetricsStore):
         rows = []
         for table in result:
             for record in table.records:
-                rows.append({"time": str(record.get_time()), "value": record.get_value()})
+                rows.append({
+                    "time":      str(record.get_time()),
+                    "value":     record.get_value(),
+                    "protocol":  record.values.get("protocol",  ""),
+                    "source_ne": record.values.get("source_ne", ""),
+                })
         return rows
 
     async def health(self) -> bool:

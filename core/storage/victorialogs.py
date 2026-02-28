@@ -16,31 +16,22 @@ class VictoriaLogsEvents(EventStore):
         self._client   = httpx.AsyncClient(timeout=10.0)
 
     async def _write(self, envelope: MessageEnvelope) -> None:
-        # NOTE: TrishulBaseModel uses use_enum_values=True, so all enum fields
-        # are stored as plain strings after model_validate() — use them directly,
-        # never call .value on them.
         doc = {
             "_time":       envelope.timestamp.isoformat(),
             "_msg":        envelope.normalized.get("message", "") or str(envelope.normalized),
-            "domain":      envelope.domain,        # str e.g. "FM"
+            "domain":      envelope.domain,
             "protocol":    envelope.protocol,
             "source_ne":   envelope.source_ne,
-            "severity":    envelope.severity,      # str e.g. "CRITICAL" or None
+            "severity":    envelope.severity,
             "envelope_id": envelope.id,
-            "direction":   envelope.direction,     # str e.g. "simulated"
+            "direction":   envelope.direction,
             "trace_id":    envelope.trace_id or "",
             **{k: str(v) for k, v in envelope.normalized.items()},
         }
-        # Remove None values — VictoriaLogs rejects null fields
         doc = {k: v for k, v in doc.items() if v is not None}
-
-        url = (
-            f"{self._base_url}/insert/jsonline"
-            f"?_stream_fields=protocol,source_ne,domain"
-        )
+        url = f"{self._base_url}/insert/jsonline?_stream_fields=protocol,source_ne,domain"
         resp = await self._client.post(
-            url,
-            content=json.dumps(doc),
+            url, content=json.dumps(doc),
             headers={"Content-Type": "application/json"},
         )
         resp.raise_for_status()
@@ -53,14 +44,26 @@ class VictoriaLogsEvents(EventStore):
 
     async def search(
         self,
-        query: str,
-        domain: str = "FM",
-        start: str  = "-6h",
-        end: str    = "now",
-        limit: int  = 100,
+        query:  str,
+        domain: str | None = None,   # None → no domain filter (returns FM+LOG)
+        start:  str = "-1h",
+        end:    str = "now",
+        limit:  int = 200,
     ) -> list[dict]:
+        """Search VictoriaLogs using LogsQL.
+
+        If domain is None the query is sent as-is (no domain: filter prepended),
+        allowing cross-domain searches.
+        """
+        if domain:
+            q = query.strip()
+            full_query = f"domain:{domain}" if not q or q == "*" else f"domain:{domain} AND ({q})"
+        else:
+            q = query.strip()
+            full_query = q if q and q != "*" else "*"
+
         params = {
-            "query": f"domain:{domain} AND ({query})",
+            "query": full_query,
             "start": start,
             "end":   end,
             "limit": str(limit),
