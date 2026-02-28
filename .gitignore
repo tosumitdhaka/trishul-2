@@ -205,3 +205,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+ui/mfe/node_modules/
+ui/mfe/node_modules/*
+ui/mfe/*/node_modules/*
+ui/mfe/*/package-lock.json
