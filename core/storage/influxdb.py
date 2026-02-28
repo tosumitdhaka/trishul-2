@@ -20,15 +20,17 @@ class InfluxDBMetrics(MetricsStore):
         self._org    = s.INFLUX_ORG
 
     async def write_pm(self, envelope: MessageEnvelope) -> None:
-        norm = envelope.normalized
+        norm        = envelope.normalized
         measurement = "pm_metrics"
-        tags  = f'protocol={envelope.protocol},source_ne={envelope.source_ne}'
-        value = norm.get("value", 0.0)
-        ts_ns = int(envelope.timestamp.timestamp() * 1e9)
+        # NOTE: envelope.protocol / source_ne are plain strings (use_enum_values=True)
+        tags  = f"protocol={envelope.protocol},source_ne={envelope.source_ne}"
+        value = float(norm.get("value", 0.0))
+        ts_ns = int(envelope.timestamp.timestamp() * 1_000_000_000)
         line  = f"{measurement},{tags} value={value} {ts_ns}"
 
-        async with self._client.write_api() as writer:
-            await writer.write(bucket=self._bucket, record=line)
+        # WriteApiAsync is NOT an async context manager — call write() directly.
+        write_api = self._client.write_api()
+        await write_api.write(bucket=self._bucket, record=line)
 
     async def query_pm(
         self,
@@ -50,8 +52,8 @@ class InfluxDBMetrics(MetricsStore):
             f'  {filter_extra}'
             f'  |> limit(n: {limit})'
         )
-        async with self._client.query_api() as q:
-            result = await q.query(flux, org=self._org)
+        query_api = self._client.query_api()
+        result    = await query_api.query(flux, org=self._org)
         rows = []
         for table in result:
             for record in table.records:

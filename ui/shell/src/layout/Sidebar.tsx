@@ -51,9 +51,9 @@ export default function Sidebar() {
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-900 border-r border-surface-200/10 flex flex-col py-4 px-3">
-      {/* Logo — use Unicode trident directly, not HTML entity */}
-      <div className="flex items-center gap-2 px-2 mb-6">
-        <span className="text-2xl select-none">{'🔱'}</span>
+      {/* Logo — use the SVG from public/ so it matches the browser tab favicon exactly */}
+      <div className="flex items-center gap-2.5 px-2 mb-6">
+        <img src="/trishul-icon.svg" alt="Trishul" className="w-7 h-7 flex-shrink-0" />
         <span className="font-bold text-white tracking-tight">Trishul</span>
       </div>
 
