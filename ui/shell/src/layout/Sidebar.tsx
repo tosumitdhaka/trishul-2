@@ -46,15 +46,14 @@ function NavItem({ to, icon: Icon, label }: { to: string; icon: React.ElementTyp
 export default function Sidebar() {
   const plugins = usePluginsStore(s => s.plugins);
 
-  // Separate UI-only dashboard MFEs from protocol MFEs
   const dashboardPlugins = plugins.filter((p: Plugin) => !p.protocols || p.protocols.length === 0);
   const protocolPlugins  = plugins.filter((p: Plugin) =>  p.protocols && p.protocols.length > 0);
 
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-900 border-r border-surface-200/10 flex flex-col py-4 px-3">
-      {/* Logo */}
+      {/* Logo — use Unicode trident directly, not HTML entity */}
       <div className="flex items-center gap-2 px-2 mb-6">
-        <span className="text-2xl">&#128305;</span>
+        <span className="text-2xl select-none">{'🔱'}</span>
         <span className="font-bold text-white tracking-tight">Trishul</span>
       </div>
 
@@ -64,7 +63,6 @@ export default function Sidebar() {
         <NavItem to="/plugins" icon={Puzzle}          label="Plugins" />
       </div>
 
-      {/* Dashboard MFEs: fm-console, pm-dashboard, log-viewer */}
       {dashboardPlugins.length > 0 && (
         <>
           <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wider text-surface-200/40">
@@ -72,7 +70,7 @@ export default function Sidebar() {
           </p>
           <div className="space-y-1 mb-4">
             {dashboardPlugins.map((p: Plugin) => {
-              const Icon = DASHBOARD_ICONS[p.name] ?? LayoutDashboard;
+              const Icon  = DASHBOARD_ICONS[p.name] ?? LayoutDashboard;
               const label = p.name
                 .split('-')
                 .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
@@ -83,7 +81,6 @@ export default function Sidebar() {
         </>
       )}
 
-      {/* Protocol plugin MFEs */}
       {protocolPlugins.length > 0 && (
         <>
           <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wider text-surface-200/40">
@@ -98,7 +95,6 @@ export default function Sidebar() {
         </>
       )}
 
-      {/* Bottom */}
       <div className="mt-auto space-y-1">
         <NavItem to="/settings" icon={Settings} label="Settings" />
         <NavItem to="/profile"  icon={User}     label="Profile" />

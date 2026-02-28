@@ -1,4 +1,4 @@
-import { Bell, UserCircle2, Settings, LogOut, User } from 'lucide-react';
+import { Bell, UserCircle2, Settings, LogOut, User, ExternalLink } from 'lucide-react';
 import { useAuthStore } from '@/store/auth';
 import { useEventsStore } from '@/store/events';
 import { useNavigate } from 'react-router-dom';
@@ -7,10 +7,10 @@ import clsx from 'clsx';
 
 /** Services shown in the topbar health strip. */
 const SERVICES = [
-  { key: 'nats',         label: 'NATS',    href: null },
-  { key: 'redis',        label: 'Redis',   href: null },
-  { key: 'influxdb',     label: 'InfluxDB',href: 'http://localhost:8086' },
-  { key: 'victorialogs', label: 'VLogs',   href: '/vlogs/' },
+  { key: 'nats',         label: 'NATS',     href: null },
+  { key: 'redis',        label: 'Redis',    href: null },
+  { key: 'influxdb',     label: 'InfluxDB', href: 'http://localhost:8086' },
+  { key: 'victorialogs', label: 'VLogs',    href: '/vlogs/select/vmui' },
 ] as const;
 
 export default function Topbar({ onNotifClick }: { onNotifClick: () => void }) {
@@ -23,10 +23,9 @@ export default function Topbar({ onNotifClick }: { onNotifClick: () => void }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Live health state: key → 'ok' | 'error' | 'unknown'
+  // Live health state: key → 'ok' | 'error' | undefined (not yet loaded)
   const [health, setHealth] = useState<Record<string, string>>({});
 
-  // Poll /health every 15 s
   useEffect(() => {
     const poll = async () => {
       try {
@@ -43,7 +42,6 @@ export default function Topbar({ onNotifClick }: { onNotifClick: () => void }) {
     return () => clearInterval(t);
   }, []);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
@@ -61,20 +59,29 @@ export default function Topbar({ onNotifClick }: { onNotifClick: () => void }) {
     <header className="h-12 flex-shrink-0 bg-surface-900 border-b border-surface-200/10
                        flex items-center px-4 gap-4">
       {/* System health dots */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         {SERVICES.map(s => {
-          const ok  = health[s.key] !== 'error';
+          const status = health[s.key];
+          const ok     = status !== 'error';
           const dot = (
-            <span className="flex items-center gap-1.5 text-xs text-surface-200/50">
+            <span className="flex items-center gap-1.5 text-xs">
               <span className={clsx(
-                'w-1.5 h-1.5 rounded-full',
-                health[s.key] === undefined
-                  ? 'bg-surface-200/30'           // unknown / first load
+                'w-1.5 h-1.5 rounded-full flex-shrink-0',
+                status === undefined
+                  ? 'bg-surface-200/30'
                   : ok
                     ? 'bg-severity-cleared'
                     : 'bg-severity-critical animate-pulse',
               )} />
-              {s.label}
+              <span className={clsx(
+                'hidden sm:inline',
+                status === undefined ? 'text-surface-200/30'
+                  : ok              ? 'text-surface-200/50'
+                  :                   'text-severity-critical',
+              )}>{s.label}</span>
+              {s.href && (
+                <ExternalLink size={10} className="text-surface-200/20 hidden sm:inline" />
+              )}
             </span>
           );
           return s.href ? (
@@ -89,7 +96,7 @@ export default function Topbar({ onNotifClick }: { onNotifClick: () => void }) {
               {dot}
             </a>
           ) : (
-            <span key={s.key}>{dot}</span>
+            <span key={s.key} title={`${s.label}: ${status ?? 'checking…'}`}>{dot}</span>
           );
         })}
       </div>
