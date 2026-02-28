@@ -5,54 +5,45 @@ import { Suspense, useEffect, useState } from 'react';
 /**
  * Loads a Vite Module Federation remote.
  *
- * Fresh build (esnext target) confirmed to use window[federationName] registration.
- * remoteEntry.js also contains import.meta so must be loaded as type="module".
- * ESM module evaluation is async, so we poll window[name] up to 3s instead
- * of relying on a fixed timeout.
+ * @originjs/vite-plugin-federation@1.3.x with target:'esnext' emits pure ESM:
+ *
+ *   export const get  = (module) => moduleMap[module]?.();
+ *   export const init = (shareScope) => { ... };
+ *
+ * Correct consumption: dynamic import() the remoteEntry URL, then call
+ * init(shareScope) and get(exposedModule) directly from its exports.
+ * No window[name], no __federation_method_* helpers needed.
  */
 async function loadRemoteModule(
-  federationName: string,
   remoteUrl: string,
   exposedModule: string,
 ): Promise<{ default: React.ComponentType }> {
-  // Inject as ES module (required for import.meta in esnext output)
-  await new Promise<void>((resolve, reject) => {
-    if (document.getElementById(`remote-${federationName}`)) { resolve(); return; }
-    const s  = document.createElement('script');
-    s.id     = `remote-${federationName}`;
-    s.src    = remoteUrl;
-    s.type   = 'module';
-    s.onload = () => resolve();
-    s.onerror = () => reject(new Error(`Failed to fetch ${remoteUrl}`));
-    document.head.appendChild(s);
-  });
-
-  // Poll for window[federationName] — ESM evaluation is async after onload
+  // Dynamic import of the remoteEntry.js as an ES module.
+  // @vite-ignore suppresses the Vite static-analysis warning on runtime URLs.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const container = await (async () => {
-    const deadline = Date.now() + 3000;
-    while (Date.now() < deadline) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const c = (window as any)[federationName];
-      if (c) return c;
-      await new Promise(r => setTimeout(r, 50));
-    }
-    return null;
-  })();
+  const remote: any = await import(/* @vite-ignore */ remoteUrl);
 
-  if (!container) {
+  if (typeof remote.get !== 'function') {
     throw new Error(
-      `window.${federationName} not found after 3s.\n` +
-      `remoteEntry.js loaded from ${remoteUrl} but the federation container did not register.\n` +
-      `Check federation({ name: '${federationName}' }) in the MFE's vite.config.ts.`,
+      `remoteEntry.js at ${remoteUrl} does not export a get() function.\n` +
+      `Exports found: ${Object.keys(remote).join(', ') || '(none)'}`,
     );
   }
 
+  // init() shares the host's module instances (React singleton etc.)
+  // Pass an empty scope if the host hasn't set one up — MFE will use its own bundled copies.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const shareScope = (window as any).__federation_shared_scope__ ?? {};
-  try { await container.init(shareScope); } catch { /* already initialised */ }
+  if (typeof remote.init === 'function') {
+    try { await remote.init(shareScope); } catch { /* already initialised */ }
+  }
 
-  const factory = await container.get(exposedModule);
+  // get() returns a factory function for the exposed module
+  const factory = await remote.get(exposedModule);
+  if (typeof factory !== 'function') {
+    throw new Error(`remote.get('${exposedModule}') did not return a factory. Got: ${typeof factory}`);
+  }
+
   return factory();
 }
 
@@ -65,13 +56,16 @@ export default function RemotePage() {
   const [error, setError]           = useState<string | null>(null);
 
   useEffect(() => {
-    if (!plugin?.remote_url || !plugin?.exposed || !plugin?.federation_name) return;
+    if (!plugin?.remote_url || !plugin?.exposed) return;
     setError(null);
     setRemoteComp(null);
-    loadRemoteModule(plugin.federation_name, plugin.remote_url, plugin.exposed)
-      .then(mod => setRemoteComp(() => mod.default ?? (mod as any)))
-      .catch(e  => setError(String(e)));
-  }, [plugin?.federation_name, plugin?.remote_url, plugin?.exposed]);
+    loadRemoteModule(plugin.remote_url, plugin.exposed)
+      .then(mod => {
+        const Comp = mod.default ?? (mod as any);
+        setRemoteComp(() => Comp);
+      })
+      .catch(e => setError(String(e)));
+  }, [plugin?.remote_url, plugin?.exposed]);
 
   if (!plugin) {
     return (
@@ -97,15 +91,11 @@ export default function RemotePage() {
         <p className="text-severity-critical text-sm font-semibold">⚠ Failed to load MFE remote</p>
         <pre className="text-surface-200/50 text-xs font-mono whitespace-pre-wrap break-all bg-black/30 rounded p-3">{error}</pre>
         <div className="text-surface-200/30 text-xs space-y-1">
-          <p>Container: <code className="font-mono text-white/50">{plugin.federation_name}</code></p>
           <p>URL: <code className="font-mono text-white/50">{plugin.remote_url}</code></p>
           <p>Exposed: <code className="font-mono text-white/50">{plugin.exposed}</code></p>
         </div>
         <button
-          onClick={() => {
-            document.getElementById(`remote-${plugin.federation_name}`)?.remove();
-            setError(null);
-          }}
+          onClick={() => setError(null)}
           className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 rounded px-3 py-1.5 transition-colors"
         >
           ↺ Retry
@@ -142,7 +132,7 @@ export default function RemotePage() {
         <div className="flex items-center gap-3 py-1">
           <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
           <p className="text-xs text-surface-200/40">
-            Loading <code className="font-mono text-white/50">{plugin.federation_name}</code>…
+            Loading <code className="font-mono text-white/50">{plugin.remote_url}</code>…
           </p>
         </div>
       </div>
