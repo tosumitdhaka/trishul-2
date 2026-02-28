@@ -1,25 +1,47 @@
 import { useParams } from 'react-router-dom';
 import { usePluginsStore } from '@/store/plugins';
 import { Suspense, useEffect, useState } from 'react';
+import * as React from 'react';
+import * as ReactDOM from 'react-dom';
 
 /**
- * Loads a Vite Module Federation remote.
+ * Federation shareScope passed to remote.init().
  *
- * @originjs/vite-plugin-federation@1.3.x with target:'esnext' emits pure ESM:
+ * vite-plugin-federation's importShared() looks up globalThis.__federation_shared_scope__
+ * (set by init()) to find the host's React. If the scope is empty the MFE
+ * bundles its own React copy — two React instances — and hooks crash with
+ * "Cannot read properties of null (reading 'useState')".
  *
- *   export const get  = (module) => moduleMap[module]?.();
- *   export const init = (shareScope) => { ... };
- *
- * Correct consumption: dynamic import() the remoteEntry URL, then call
- * init(shareScope) and get(exposedModule) directly from its exports.
- * No window[name], no __federation_method_* helpers needed.
+ * We build the scope from the shell's already-loaded React so MFEs share one instance.
+ * Format: { [moduleName]: { [version]: { get, loaded, from, eager } } }
  */
+function buildShareScope() {
+  return {
+    react: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      [(React as any).version]: {
+        get:    () => Promise.resolve(() => React),
+        loaded: true,
+        from:   'shell',
+        eager:  true,
+      },
+    },
+    'react-dom': {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      [(ReactDOM as any).version]: {
+        get:    () => Promise.resolve(() => ReactDOM),
+        loaded: true,
+        from:   'shell',
+        eager:  true,
+      },
+    },
+  };
+}
+
 async function loadRemoteModule(
   remoteUrl: string,
   exposedModule: string,
 ): Promise<{ default: React.ComponentType }> {
-  // Dynamic import of the remoteEntry.js as an ES module.
-  // @vite-ignore suppresses the Vite static-analysis warning on runtime URLs.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const remote: any = await import(/* @vite-ignore */ remoteUrl);
 
@@ -30,15 +52,10 @@ async function loadRemoteModule(
     );
   }
 
-  // init() shares the host's module instances (React singleton etc.)
-  // Pass an empty scope if the host hasn't set one up — MFE will use its own bundled copies.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const shareScope = (window as any).__federation_shared_scope__ ?? {};
   if (typeof remote.init === 'function') {
-    try { await remote.init(shareScope); } catch { /* already initialised */ }
+    try { await remote.init(buildShareScope()); } catch { /* already initialised */ }
   }
 
-  // get() returns a factory function for the exposed module
   const factory = await remote.get(exposedModule);
   if (typeof factory !== 'function') {
     throw new Error(`remote.get('${exposedModule}') did not return a factory. Got: ${typeof factory}`);
@@ -61,6 +78,7 @@ export default function RemotePage() {
     setRemoteComp(null);
     loadRemoteModule(plugin.remote_url, plugin.exposed)
       .then(mod => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const Comp = mod.default ?? (mod as any);
         setRemoteComp(() => Comp);
       })
