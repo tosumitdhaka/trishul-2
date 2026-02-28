@@ -1,9 +1,11 @@
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { usePluginsStore } from '@/store/plugins';
+import type { Plugin } from '@/store/plugins';
 import clsx from 'clsx';
 import {
   LayoutDashboard, Puzzle, Settings, User,
   Radio, Wifi, Box, FileArchive, Webhook, FolderOpen,
+  BarChart2, ScrollText, MonitorDot,
 } from 'lucide-react';
 
 const PROTOCOL_ICONS: Record<string, React.ElementType> = {
@@ -13,6 +15,12 @@ const PROTOCOL_ICONS: Record<string, React.ElementType> = {
   avro:     FileArchive,
   webhook:  Webhook,
   sftp:     FolderOpen,
+};
+
+const DASHBOARD_ICONS: Record<string, React.ElementType> = {
+  'fm-console':   MonitorDot,
+  'pm-dashboard': BarChart2,
+  'log-viewer':   ScrollText,
 };
 
 function NavItem({ to, icon: Icon, label }: { to: string; icon: React.ElementType; label: string }) {
@@ -38,28 +46,51 @@ function NavItem({ to, icon: Icon, label }: { to: string; icon: React.ElementTyp
 export default function Sidebar() {
   const plugins = usePluginsStore(s => s.plugins);
 
+  // Separate UI-only dashboard MFEs from protocol MFEs
+  const dashboardPlugins = plugins.filter((p: Plugin) => !p.protocols || p.protocols.length === 0);
+  const protocolPlugins  = plugins.filter((p: Plugin) =>  p.protocols && p.protocols.length > 0);
+
   return (
     <aside className="w-56 flex-shrink-0 bg-surface-900 border-r border-surface-200/10 flex flex-col py-4 px-3">
       {/* Logo */}
       <div className="flex items-center gap-2 px-2 mb-6">
-        <span className="text-2xl">🔱</span>
+        <span className="text-2xl">&#128305;</span>
         <span className="font-bold text-white tracking-tight">Trishul</span>
       </div>
 
       {/* Shell pages */}
       <div className="space-y-1 mb-4">
-        <NavItem to="/"        icon={LayoutDashboard} label="Dashboard" />
+        <NavItem to="/"        icon={LayoutDashboard} label="Overview" />
         <NavItem to="/plugins" icon={Puzzle}          label="Plugins" />
       </div>
 
-      {/* Divider + Plugin nav */}
-      {plugins.length > 0 && (
+      {/* Dashboard MFEs: fm-console, pm-dashboard, log-viewer */}
+      {dashboardPlugins.length > 0 && (
+        <>
+          <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wider text-surface-200/40">
+            Dashboards
+          </p>
+          <div className="space-y-1 mb-4">
+            {dashboardPlugins.map((p: Plugin) => {
+              const Icon = DASHBOARD_ICONS[p.name] ?? LayoutDashboard;
+              const label = p.name
+                .split('-')
+                .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
+                .join(' ');
+              return <NavItem key={p.name} to={`/${p.name}`} icon={Icon} label={label} />;
+            })}
+          </div>
+        </>
+      )}
+
+      {/* Protocol plugin MFEs */}
+      {protocolPlugins.length > 0 && (
         <>
           <p className="px-3 mb-1 text-xs font-semibold uppercase tracking-wider text-surface-200/40">
             Protocols
           </p>
           <div className="space-y-1 mb-4">
-            {plugins.map(p => {
+            {protocolPlugins.map((p: Plugin) => {
               const Icon = PROTOCOL_ICONS[p.name] ?? Puzzle;
               return <NavItem key={p.name} to={`/${p.name}`} icon={Icon} label={p.name.toUpperCase()} />;
             })}

@@ -70,7 +70,7 @@ services:
     networks:
       - trishul-net
 
-  # ── MFE remotes ────────────────────────────────────────────────────────────────────
+  # ── MFE remotes ──────────────────────────────────────────────────────────────────────────────────
 
   fm-console:
     build:
@@ -242,6 +242,8 @@ services:
       DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN:-trishul-dev-token}
     volumes:
       - influx-data:/var/lib/influxdb2
+    ports:
+      - "8086:8086"   # expose InfluxDB UI + API to host
     healthcheck:
       test: ["CMD", "influx", "ping"]
       interval: 15s
@@ -263,6 +265,9 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.vlogs.rule=PathPrefix(`/vlogs`)"
+      - "traefik.http.routers.vlogs.priority=8"
+      - "traefik.http.middlewares.vlogs-strip.stripprefix.prefixes=/vlogs"
+      - "traefik.http.routers.vlogs.middlewares=vlogs-strip"
       - "traefik.http.services.vlogs.loadbalancer.server.port=9428"
     networks:
       - trishul-net

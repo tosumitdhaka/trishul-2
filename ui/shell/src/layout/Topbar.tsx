@@ -5,16 +5,13 @@ import { useNavigate } from 'react-router-dom';
 import { useState, useRef, useEffect } from 'react';
 import clsx from 'clsx';
 
-interface StatusDotProps { label: string; ok?: boolean; }
-function StatusDot({ label, ok = true }: StatusDotProps) {
-  return (
-    <span className="flex items-center gap-1.5 text-xs text-surface-200/50">
-      <span className={clsx('w-1.5 h-1.5 rounded-full',
-                            ok ? 'bg-severity-cleared' : 'bg-severity-critical')} />
-      {label}
-    </span>
-  );
-}
+/** Services shown in the topbar health strip. */
+const SERVICES = [
+  { key: 'nats',         label: 'NATS',    href: null },
+  { key: 'redis',        label: 'Redis',   href: null },
+  { key: 'influxdb',     label: 'InfluxDB',href: 'http://localhost:8086' },
+  { key: 'victorialogs', label: 'VLogs',   href: '/vlogs/' },
+] as const;
 
 export default function Topbar({ onNotifClick }: { onNotifClick: () => void }) {
   const user     = useAuthStore(s => s.user);
@@ -25,6 +22,26 @@ export default function Topbar({ onNotifClick }: { onNotifClick: () => void }) {
 
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Live health state: key → 'ok' | 'error' | 'unknown'
+  const [health, setHealth] = useState<Record<string, string>>({});
+
+  // Poll /health every 15 s
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const r = await fetch('/health');
+        const d = await r.json();
+        const deps = (d.dependencies ?? {}) as Record<string, { status: string }>;
+        setHealth(Object.fromEntries(Object.entries(deps).map(([k, v]) => [k, v.status])));
+      } catch {
+        setHealth({});
+      }
+    };
+    poll();
+    const t = setInterval(poll, 15_000);
+    return () => clearInterval(t);
+  }, []);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -44,10 +61,37 @@ export default function Topbar({ onNotifClick }: { onNotifClick: () => void }) {
     <header className="h-12 flex-shrink-0 bg-surface-900 border-b border-surface-200/10
                        flex items-center px-4 gap-4">
       {/* System health dots */}
-      <div className="flex items-center gap-4 text-xs">
-        <StatusDot label="NATS" />
-        <StatusDot label="Redis" />
-        <StatusDot label="InfluxDB" />
+      <div className="flex items-center gap-4">
+        {SERVICES.map(s => {
+          const ok  = health[s.key] !== 'error';
+          const dot = (
+            <span className="flex items-center gap-1.5 text-xs text-surface-200/50">
+              <span className={clsx(
+                'w-1.5 h-1.5 rounded-full',
+                health[s.key] === undefined
+                  ? 'bg-surface-200/30'           // unknown / first load
+                  : ok
+                    ? 'bg-severity-cleared'
+                    : 'bg-severity-critical animate-pulse',
+              )} />
+              {s.label}
+            </span>
+          );
+          return s.href ? (
+            <a
+              key={s.key}
+              href={s.href}
+              target="_blank"
+              rel="noreferrer"
+              className="hover:text-white transition-colors"
+              title={`Open ${s.label} UI`}
+            >
+              {dot}
+            </a>
+          ) : (
+            <span key={s.key}>{dot}</span>
+          );
+        })}
       </div>
 
       <div className="flex-1" />
