@@ -16,7 +16,8 @@ from datetime import datetime, timezone
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(tags=["webhook"])
+# prefix=/api/v1 is added by PluginRegistry; plugin name segment must be here.
+router = APIRouter(prefix="/webhook", tags=["webhook"])
 
 
 @router.post("/receive", response_model=AcceptedResponse, status_code=202)
@@ -25,15 +26,13 @@ async def receive(payload: WebhookPayload, request: Request):
     trace_id    = getattr(request.state, "trace_id", None)
     envelope_id = str(uuid.uuid4())
 
-    # Dedup check
     redis = request.app.state.redis
     if redis:
         dedup_key = f"dedup:{envelope_id}"
         if await redis.exists(dedup_key):
             return AcceptedResponse(envelope_id=envelope_id, status="duplicate")
-        await redis.setex(dedup_key, 900, "processing")  # 15 min
+        await redis.setex(dedup_key, 900, "processing")
 
-    # Normalise via FCAPSNormalizer
     decoded = payload.model_dump()
     meta = {
         "envelope_id": envelope_id,
@@ -48,9 +47,8 @@ async def receive(payload: WebhookPayload, request: Request):
     }
     envelope = await fcaps_normalizer.normalize(decoded, meta)
 
-    # Publish to NATS
     nats = request.app.state.nats
-    await publish_envelope(nats, envelope, f"fcaps.ingest.webhook")
+    await publish_envelope(nats, envelope, "fcaps.ingest.webhook")
 
     log.info("envelope_ingested", envelope_id=envelope_id, domain=payload.domain, trace_id=trace_id)
     return AcceptedResponse(envelope_id=envelope_id)
@@ -66,7 +64,7 @@ async def send(body: SendRequest, request: Request):
 
 @router.post("/simulate")
 async def simulate(body: SimulateRequest, request: Request):
-    """Generate synthetic events and publish them through the same ingest pipeline."""
+    """Generate synthetic events and publish to fcaps.simulated.webhook."""
     events       = generate_events(body.count, body.domain, body.severity, body.source_ne)
     envelope_ids = []
 
@@ -86,7 +84,7 @@ async def simulate(body: SimulateRequest, request: Request):
         }
         envelope = await fcaps_normalizer.normalize(decoded, meta)
         nats = request.app.state.nats
-        await publish_envelope(nats, envelope, "fcaps.ingest.webhook")
+        await publish_envelope(nats, envelope, "fcaps.simulated.webhook")
         envelope_ids.append(envelope_id)
 
     return TrishulResponse(success=True, data={"sent": body.count, "envelope_ids": envelope_ids})
@@ -98,7 +96,7 @@ async def status(envelope_id: str, request: Request):
     if redis:
         val = await redis.get(f"dedup:{envelope_id}")
         if val:
-            return TrishulResponse(success=True, data={"envelope_id": envelope_id, "status": val.decode()})
+            return TrishulResponse(success=True, data={"envelope_id": envelope_id, "status": val})
     return TrishulResponse(success=True, data={"envelope_id": envelope_id, "status": "not_found"})
 
 
